@@ -5,11 +5,19 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "autoreload>=0.1.2",
+    "ipykernel>=6.29.5",
+    "numpy>=2.2.4",
     "pandas>=2.2.3",
+    "scikit-learn>=1.6.1",
+    "tqdm>=4.67.1",
 ]
 
 [dependency-groups]
 dev = [
+    "ipykernel>=6.29.5",
+    "jupyterlab>=4.3.6",
+    "notebook>=7.3.3",
     "pre-commit>=4.2.0",
     "pytest>=8.3.5",
     "pytest-cov>=6.0.0",
