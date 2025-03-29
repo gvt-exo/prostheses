@@ -15,3 +15,9 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest-regressions>=2.7.0",
 ]
+
+[tool.isort]
+src_paths = ["code"]
+profile = "black"
+line_length = 90
+lines_after_imports = 2
