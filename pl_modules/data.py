@@ -69,8 +69,8 @@ class MyDataModule(pl.LightningDataModule):
 
     def __init__(
         self,
-        train_path: str = r"C:\projects\prostheses\data\ninaprodb1train.pkl",
-        test_path: str = r"C:\projects\prostheses\data\ninaprodb1test.pkl",
+        train_path: str,
+        test_path: str,
         batch_size: int = 32,
         num_workers: int = 4,
     ):

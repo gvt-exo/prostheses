@@ -1,9 +1,9 @@
 import torch.nn as nn
 
 
-class EMGHandNetPyTorch(nn.Module):
+class EMGHandNet(nn.Module):
     def __init__(self, num_classes=52):
-        super(EMGHandNetPyTorch, self).__init__()
+        super(EMGHandNet, self).__init__()
 
         # Модифицированная CNN часть
         self.cnn = nn.Sequential(
@@ -27,7 +27,7 @@ class EMGHandNetPyTorch(nn.Module):
             num_layers=1,  # Уменьшаем количество слоев
             bidirectional=True,
             batch_first=True,
-            dropout=0.2,
+            # dropout=0.2,
         )
 
         # Полносвязные слои

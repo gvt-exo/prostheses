@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/projects/prostheses/pl_modules/mlruns/191912357543723579/c2b29d3bce544d5a85c72c24d4437d6b/artifacts
+end_time: 1743790825068
+entry_point_name: ""
+experiment_id: "191912357543723579"
+lifecycle_stage: active
+run_id: c2b29d3bce544d5a85c72c24d4437d6b
+run_name: capable-auk-759
+run_uuid: c2b29d3bce544d5a85c72c24d4437d6b
+source_name: ""
+source_type: 4
+source_version: ""
+start_time: 1743790824055
+status: 4
+tags: []
+user_id: Administrator
