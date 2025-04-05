@@ -1,17 +1,20 @@
 from typing import Any
 
+import hydra
 import pytorch_lightning as pl
 import torch
+from omegaconf import DictConfig
 from tqdm import tqdm
 
 
 class EMGHandNet_classifier(pl.LightningModule):
-    def __init__(self, model, lr):
+    def __init__(self, model, lr, config: DictConfig):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
         self.model = model
         self.lr = lr
         self.loss_fn = torch.nn.CrossEntropyLoss()
+        self.config = config
 
     def forward(self, x):
         return self.model(x)
@@ -50,7 +53,7 @@ class EMGHandNet_classifier(pl.LightningModule):
                 optimizer,
                 max_lr=1e-3,
                 steps_per_epoch=100,
-                epochs=40,
+                epochs=self.config["training"]["num_epochs"],
                 pct_start=0.25,
                 anneal_strategy="cos",
                 div_factor=25.0,
