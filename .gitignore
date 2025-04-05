@@ -172,3 +172,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+pl_modules/mlruns
+pl_modules/wandb
+pl_modules/outputs
+mlruns/
+checkpoints/
