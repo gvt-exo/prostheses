@@ -21,13 +21,17 @@ def main(config: DictConfig):
     pl.seed_everything(42)
 
     dm = MyDataModule(
-        train_path=r"C:\projects\prostheses\data\ninaprodb1train.pkl",
-        test_path=r"C:\projects\prostheses\data\ninaprodb1test.pkl",
-        batch_size=32,
-        num_workers=4,
+        train_path=config["data_loading"]["train_data_path"],
+        test_path=config["data_loading"]["test_data_path"],
+        batch_size=config["training"]["batch_size"],
+        num_workers=config["training"]["num_workers"],
     )
 
-    model = EMGHandNet_classifier(EMGHandNet(num_classes=52), lr=1e-4)
+    model = EMGHandNet_classifier(
+        EMGHandNet(num_classes=config["model"]["num_classes"]),
+        lr=config["training"]["lr"],
+        config=config,
+    )
 
     loggers = [
         pl.loggers.WandbLogger(
@@ -44,7 +48,7 @@ def main(config: DictConfig):
     ]
 
     trainer = pl.Trainer(
-        max_epochs=40,
+        max_epochs=config["training"]["num_epochs"],
         logger=loggers,
         log_every_n_steps=1,
         callbacks=callbacks,
