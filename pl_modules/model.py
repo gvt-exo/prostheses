@@ -8,7 +8,7 @@ from tqdm import tqdm
 class EMGHandNet_classifier(pl.LightningModule):
     def __init__(self, model, lr):
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=["model"])
         self.model = model
         self.lr = lr
         self.loss_fn = torch.nn.CrossEntropyLoss()
@@ -44,4 +44,20 @@ class EMGHandNet_classifier(pl.LightningModule):
         return acc.item()
 
     def configure_optimizers(self) -> Any:
-        return torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        scheduler = {
+            "scheduler": torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=1e-3,
+                steps_per_epoch=100,
+                epochs=40,
+                pct_start=0.25,
+                anneal_strategy="cos",
+                div_factor=25.0,
+                final_div_factor=1e4,
+                verbose=True,
+            ),
+            "monitor": "loss",  # логгируете это в validation_step
+            "interval": "step",
+        }
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}

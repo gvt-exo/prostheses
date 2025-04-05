@@ -72,7 +72,7 @@ class MyDataModule(pl.LightningDataModule):
         train_path: str,
         test_path: str,
         batch_size: int = 32,
-        num_workers: int = 4,
+        num_workers: int = 8,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -117,6 +117,8 @@ class MyDataModule(pl.LightningDataModule):
             self.train_dataset,
             batch_size=16,
             shuffle=True,
+            num_workers=self.num_workers,
+            persistent_workers=True,
         )
 
     def val_dataloader(self) -> torch.utils.data.DataLoader:
@@ -124,6 +126,8 @@ class MyDataModule(pl.LightningDataModule):
             self.val_dataset,
             batch_size=16,
             shuffle=False,
+            num_workers=self.num_workers,
+            persistent_workers=True,
         )
 
     def test_dataloader(self) -> torch.utils.data.DataLoader:
@@ -131,6 +135,8 @@ class MyDataModule(pl.LightningDataModule):
             self.test_dataset,
             batch_size=16,
             shuffle=False,
+            num_workers=self.num_workers,
+            persistent_workers=True,
         )
 
 
