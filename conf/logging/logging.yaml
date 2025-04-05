@@ -1,0 +1,12 @@
+label: wandb
+
+# Wandb
+project: emg-classifier
+name: model-exp
+save_dir: "."
+
+# MLFlow
+experiment_name: emg-classifier
+run_name: model-exp
+mlflow_save_dir: "."
+tracking_uri: http://127.0.0.1:8080
