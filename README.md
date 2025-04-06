@@ -56,14 +56,14 @@ make html
 
 Документация по всему проекту находится в `docs/build/html/index.html`. Полный путь к этому файлу можно вставить в адресную строку барузера, чтобы её посмотреть
 
-## Contributing
+## Обязательные рекомендации
 
-- Follow docstring conventions (Google-style preferred)
-- Run `pre-commit` before pushing
-- Write unit tests for critical logic if possible
+- К функциям пишите докстринги (желательно по стандартам Google-style)
+- Перед коммитом и пушом обязательно запускайте `pre-commit`!!
 
 ## Контакты
 TG: @GVT_EXO
+
 gkarnup@niime.ru
 
 ---
