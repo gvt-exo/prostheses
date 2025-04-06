@@ -5,19 +5,22 @@ from core_arch import EMGHandNet
 from data import MyDataModule
 from model import EMGHandNet_classifier
 from omegaconf import DictConfig
-from pytorch_lightning.loggers import MLFlowLogger
 
-
-mlflow_logger = MLFlowLogger(
-    experiment_name="my_experiment", tracking_uri="file:./mlruns"
-)
-trainer = pl.Trainer(logger=mlflow_logger)
 
 torch.set_float32_matmul_precision("medium")
 
 
 @hydra.main(version_base=None, config_path="../conf", config_name="config")
 def main(config: DictConfig):
+    """В этом модуле описывается процесс обучения в динамике.
+    Указываются логгеры и коллбэки, модели обучения и т.д.
+    Само обучение реализуется с помощью модуля Pytorch Lightning Trainer.
+    В нем дополнительно указываются настройки, такие как активация/дизактивация логера,
+    девайс обучения, и прочие фишки, типа антивзрыва градиента.
+
+    Все константы, как в этом, так и в предыдущих файлах вынесены в конфигурационные файлы,
+    одноименные с названием модуля и расположенные в папке conf.
+    """
     pl.seed_everything(42)
 
     dm = MyDataModule(

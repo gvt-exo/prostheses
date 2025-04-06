@@ -2,6 +2,11 @@ import torch.nn as nn
 
 
 class EMGHandNet(nn.Module):
+    """Тут описывается основное ядро архитектуры, именно её слои и методы forward.
+    Далее это ядро передается в файл модели обучения model.py, где указываются
+    парамеры уже обучения.
+    """
+
     def __init__(self, num_classes=52):
         super(EMGHandNet, self).__init__()
 

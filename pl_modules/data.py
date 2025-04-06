@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -7,8 +7,9 @@ import torch
 from sklearn.model_selection import train_test_split
 
 
-# Кастомный класс Dataset для PyTorch
 class Nina1Dataset(torch.utils.data.Dataset):
+    """Кастомный класс, используемый для формирования датасета из данных для нашей задачи"""
+
     def __init__(self, path: str):
         self.dataframe = pd.read_pickle(path)
 
@@ -38,7 +39,8 @@ class Nina1Dataset(torch.utils.data.Dataset):
 
 
 class MyDataModule(pl.LightningDataModule):
-    """Модуль DataModule стандартизирует разбиение на train, test, val, подготовку данных и
+    """В этом файле ведется вся работы с данными. Для этого есть специальный встроенный модуль.
+    Модуль DataModule стандартизирует разбиение на train, test, val, подготовку данных и
     их преобразование. Основным преимуществом является согласованное разбиение данных,
     подготовка данных и преобразования в разных моделях.
 
@@ -71,8 +73,8 @@ class MyDataModule(pl.LightningDataModule):
         self,
         train_path: str,
         test_path: str,
-        batch_size: int = 32,
-        num_workers: int = 8,
+        batch_size: int,
+        num_workers: int,
     ):
         super().__init__()
         self.save_hyperparameters()
