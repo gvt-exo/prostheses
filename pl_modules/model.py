@@ -1,13 +1,16 @@
 from typing import Any
 
-import hydra
 import pytorch_lightning as pl
 import torch
 from omegaconf import DictConfig
-from tqdm import tqdm
 
 
 class EMGHandNet_classifier(pl.LightningModule):
+    """Тут производится полная настройка модели обучения.
+    Указывается архитектура, которую будем обучать, настраиваются шаги и оптимизаторы.
+    Так же добавляются точки логгирования, индивидуально для каждого типа шага
+    (валидационный или тренировочный)."""
+
     def __init__(self, model, lr, config: DictConfig):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
@@ -57,10 +60,10 @@ class EMGHandNet_classifier(pl.LightningModule):
                 pct_start=0.25,
                 anneal_strategy="cos",
                 div_factor=25.0,
-                final_div_factor=1e4,
+                final_div_factor=1e2,
                 verbose=True,
             ),
-            "monitor": "loss",  # логгируете это в validation_step
+            "monitor": "loss",
             "interval": "step",
         }
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
