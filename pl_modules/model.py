@@ -22,7 +22,7 @@ class EMGHandNet_classifier(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, batch: Any, batch_idx: int, dataloader_idx=0):
+    def training_step(self, batch: Any):
         data, logits = batch
         preds = self(data)
         loss = self.loss_fn(preds, logits)
@@ -31,7 +31,7 @@ class EMGHandNet_classifier(pl.LightningModule):
         self.log("train_acc", acc, prog_bar=True, on_step=False, on_epoch=True)
         return {"loss": loss, "train_acc": acc}
 
-    def validation_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0):
+    def validation_step(self, batch: Any):
         data, logits = batch
         preds = self(data)
         loss = self.loss_fn(preds, logits)
@@ -40,10 +40,10 @@ class EMGHandNet_classifier(pl.LightningModule):
         self.log("val_acc", acc, prog_bar=True, on_epoch=True)
         return {"loss": loss, "val_acc": acc}
 
-    def test_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0):
+    def test_step(self):
         pass
 
-    def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Any:
+    def predict_step(self, batch: Any) -> Any:
         data, logits = batch
         preds = self(data)
         acc = (preds.argmax(dim=1) == logits).float().mean()
