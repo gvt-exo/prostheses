@@ -1,10 +1,35 @@
+import os
+from glob import glob
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
+import scipy.io
 import torch
 from sklearn.model_selection import train_test_split
+
+
+"""Функция работы с файлами .mat"""
+
+
+def load_mat_files_from_folder(folder_path):
+    folder_path = Path(folder_path)
+    mat_files = list(folder_path.glob("*.mat"))
+    records = []
+
+    for file_path in mat_files:
+        mat_data = scipy.io.loadmat(str(file_path))
+        emg_data = mat_data.get("emg")
+        stimulus = mat_data.get("stimulus").flatten()
+
+        for i in range(len(stimulus)):
+            if stimulus[i] == 0:  # Пропускаем метки покоя
+                continue
+            records.append({"emg": emg_data[i], "stimulus": int(stimulus[i])})
+
+    return pd.DataFrame(records)
 
 
 class Nina1Dataset(torch.utils.data.Dataset):
@@ -100,11 +125,23 @@ class MyDataModule(pl.LightningDataModule):
 
         setup вызывается из каждого процесса на всех узлах. Здесь рекомендуется задать состояние.
         """
-        full_dataset = Nina1Dataset(self.train_path)
+
+        """Подгружает .mat файлы из train/test папок и формирует датасеты"""
+        train_df = load_mat_files_from_folder(self.train_path)
+        test_df = load_mat_files_from_folder(self.test_path)
+
+        """Сохраняем во временные файлы (если Nina1Dataset требует pkl)"""
+        train_pkl = os.path.join(os.path.dirname(self.train_path), "train_temp.pkl")
+        test_pkl = os.path.join(os.path.dirname(self.test_path), "test_temp.pkl")
+
+        train_df.to_pickle(train_pkl)
+        test_df.to_pickle(test_pkl)
+
+        full_dataset = Nina1Dataset(train_pkl)  # Передаем путь к pkl файлу
         self.train_dataset, self.val_dataset = train_test_split(
             full_dataset, test_size=0.3, random_state=21
         )
-        self.test_dataset = Nina1Dataset(self.test_path)
+        self.test_dataset = Nina1Dataset(test_pkl)
 
     def teardown(self, stage: str) -> None:
         """Вызывается в конце обучения (train + validate), валидации, тестирования или предсказания.
