@@ -178,3 +178,12 @@ pl_modules/wandb
 pl_modules/outputs
 mlruns/
 checkpoints/
+
+# Игнорировать бинарные данные
+data/
+wandb/
+outputs/
+# Дополнительные правила
+*.mat
+*.pkl
+*.wandb
