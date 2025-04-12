@@ -23,6 +23,7 @@ class EMGHandNet(nn.Module):
             nn.BatchNorm1d(256),
             nn.AdaptiveAvgPool1d(4),  # Фиксирует выходной размер
             nn.Flatten(),
+            nn.Dropout(0.3),
         )
 
         # Bi-LSTM часть

@@ -36,9 +36,9 @@ class EMGHandNet_classifier(pl.LightningModule):
         preds = self(data)
         loss = self.loss_fn(preds, logits)
         acc = (preds.argmax(dim=1) == logits).float().mean()
-        self.log("loss", loss, prog_bar=True, on_epoch=True)
+        self.log("val_loss", loss, prog_bar=True, on_epoch=True)
         self.log("val_acc", acc, prog_bar=True, on_epoch=True)
-        return {"loss": loss, "val_acc": acc}
+        return {"val_loss": loss, "val_acc": acc}
 
     def test_step(self):
         pass
@@ -52,18 +52,13 @@ class EMGHandNet_classifier(pl.LightningModule):
     def configure_optimizers(self) -> Any:
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         scheduler = {
-            "scheduler": torch.optim.lr_scheduler.OneCycleLR(
+            "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
-                max_lr=1e-3,
-                steps_per_epoch=100,
-                epochs=self.config["training"]["num_epochs"],
-                pct_start=0.25,
-                anneal_strategy="cos",
-                div_factor=25.0,
-                final_div_factor=1e2,
-                verbose=True,
+                mode="min",
+                patience=5,
+                factor=0.5,
             ),
-            "monitor": "loss",
-            "interval": "step",
+            "monitor": "val_loss",
+            "interval": "epoch",
         }
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
