@@ -1,2 +1,4 @@
-train_data_path: 'C:\projects\prostheses\data\ninaprodb1train.pkl'
-test_data_path: 'C:\projects\prostheses\data\ninaprodb1test.pkl'
+data_root: C:/Users/igors/PycharmProjects/prostheses/data
+train_data_path: ${data_loading.data_root}/train_data/ninaprodb1train.pkl
+test_data_path: ${data_loading.data_root}/test_data/ninaprodb1test.pkl
+val_size: 0.2

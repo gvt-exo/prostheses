@@ -1,7 +1,7 @@
 import os
 from glob import glob
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 import pandas as pd
@@ -11,55 +11,87 @@ import torch
 from sklearn.model_selection import train_test_split
 
 
-"""Функция работы с файлами .mat"""
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_ROOT = PROJECT_ROOT / "data"
 
 
-def load_mat_files_from_folder(folder_path):
-    folder_path = Path(folder_path)
-    mat_files = list(folder_path.glob("*.mat"))
-    records = []
+class MatToPklConverter:
+    """Конвертирует .mat файлы в train/test .pkl"""
 
-    for file_path in mat_files:
-        mat_data = scipy.io.loadmat(str(file_path))
-        emg_data = mat_data.get("emg")
-        stimulus = mat_data.get("stimulus").flatten()
+    @staticmethod
+    def convert_folder(
+        input_dir: str, output_train: str, output_test: str, test_size: float = 0.2
+    ):
+        """
+        Args:
+            input_dir: Папка с .mat файлами
+            output_train: Путь для сохранения train.pkl
+            output_test: Путь для сохранения test.pkl
+            test_size: Доля тестовых данных
+        """
+        input_dir = Path(input_dir)
+        records = []
 
-        for i in range(len(stimulus)):
-            if stimulus[i] == 0:  # Пропускаем метки покоя
-                continue
-            records.append({"emg": emg_data[i], "stimulus": int(stimulus[i])})
+        # Чтение .mat файлов
+        for mat_file in input_dir.glob("*.mat"):
+            data = scipy.io.loadmat(str(mat_file))
+            emg = data["emg"]
+            stimulus = data["stimulus"].flatten()
 
-    return pd.DataFrame(records)
+            for i in range(len(stimulus)):
+                if stimulus[i] != 0:  # Пропускаем покой
+                    records.append({"emg": emg[i], "stimulus": int(stimulus[i])})
+
+        # Разделение на train/test
+        df = pd.DataFrame(records)
+        train_df, test_df = train_test_split(
+            df, test_size=test_size, random_state=42, stratify=df["stimulus"]
+        )
+
+        # Сохранение
+        train_df.to_pickle(output_train)
+        test_df.to_pickle(output_test)
+        print(f"Сохранено: {output_train} ({len(train_df)} записей)")
+        print(f"Сохранено: {output_test} ({len(test_df)} записей)")
 
 
 class Nina1Dataset(torch.utils.data.Dataset):
     """Кастомный класс, используемый для формирования датасета из данных для нашей задачи"""
 
-    def __init__(self, path: str):
-        self.dataframe = pd.read_pickle(path)
+    def __init__(self, data: pd.DataFrame):
+        """
+        Args:
+            data: DataFrame с колонками 'emg' и 'stimulus'
+        """
+        self.dataframe = data
+
+        # Проверка структуры данных
+        if not all(col in data.columns for col in ["emg", "stimulus"]):
+            raise ValueError("DataFrame must contain 'emg' and 'stimulus' columns")
 
     def __len__(self):
         return len(self.dataframe)
 
     def __getitem__(self, idx):
         row = self.dataframe.iloc[idx]
-        emg_data = row["emg"]
+        emg = row["emg"]
+        stimulus = row["stimulus"]
 
-        # Обработка данных как в оригинальном классе
-        if isinstance(emg_data, list) and len(emg_data) == 1:
-            emg_data = emg_data[0]
+        # Обработка EMG сигнала
+        if isinstance(emg, list) and len(emg) == 1:
+            emg = emg[0]
 
-        data = emg_data[:500]
+        # Дополнение нулями до 500 отсчетов
+        data = emg[:500]
         if len(data) < 500:
             data = np.concatenate((data, np.zeros((500 - len(data), 10))), axis=0)
 
-        # Изменение формы данных (25, 20, 10)
+        # Изменение формы (25, 20, 10)
         input_data = data.reshape((25, 20, 10))
-        label = row["stimulus"]
 
         return (
             torch.tensor(input_data, dtype=torch.float32),
-            torch.tensor(label, dtype=torch.long),
+            torch.tensor(stimulus, dtype=torch.long),
         )
 
 
@@ -94,85 +126,83 @@ class MyDataModule(pl.LightningDataModule):
                 # вызывается на каждом процессе DDP
     """
 
+    """DataModule для работы с готовыми .pkl файлами"""
+
     def __init__(
         self,
-        train_path: str,
-        test_path: str,
-        batch_size: int,
-        num_workers: int,
+        data_root: str = "data",
+        batch_size: int = 32,
+        num_workers: int = 4,
+        val_size: float = 0.2,
     ):
+        """
+        Args:
+            data_root: Корневая папка с данными
+            batch_size: Размер батча
+            num_workers: Число workers для DataLoader
+            val_size: Доля валидационных данных от train
+        """
         super().__init__()
-        self.save_hyperparameters()
-        self.train_path = train_path
-        self.test_path = test_path
+        self.data_root = Path(data_root).resolve()
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.val_size = val_size
 
-    def prepare_data(self):
-        """Используйте это для загрузки и подготовки данных. Загрузка и сохранение
-        данных в нескольких процессах (с распределенными настройками) приведет к
-        повреждению данных.
-        Lightning гарантирует, что этот метод вызывается только в рамках одного процесса,
-        поэтому вы можете безопасно добавить свою логику загрузки в него.
-        """
-        pass
+        # Пути к файлам
+        self.train_pkl = self.data_root / "train_data" / "ninaprodb1train.pkl"
+        self.test_pkl = self.data_root / "test_data" / "ninaprodb1test.pkl"
+
+        # Проверка существования файлов
+        if not self.train_pkl.exists():
+            raise FileNotFoundError(f"Train file not found: {self.train_pkl}")
+        if not self.test_pkl.exists():
+            raise FileNotFoundError(f"Test file not found: {self.test_pkl}")
 
     def setup(self, stage: Optional[str] = None):
-        """Вызывается в начале процесса fit (train + validate), проверки, тестирования
-        или прогнозирования.
-        Это хороший инструмент, когда вам нужно динамически создавать модели или что-то в них
-        корректировать. Этот инструмент вызывается в каждом процессе при использовании DDP.
-
-        setup вызывается из каждого процесса на всех узлах. Здесь рекомендуется задать состояние.
-        """
-
-        """Подгружает .mat файлы из train/test папок и формирует датасеты"""
-        train_df = load_mat_files_from_folder(self.train_path)
-        test_df = load_mat_files_from_folder(self.test_path)
-
-        """Сохраняем во временные файлы (если Nina1Dataset требует pkl)"""
-        train_pkl = os.path.join(os.path.dirname(self.train_path), "train_temp.pkl")
-        test_pkl = os.path.join(os.path.dirname(self.test_path), "test_temp.pkl")
-
-        train_df.to_pickle(train_pkl)
-        test_df.to_pickle(test_pkl)
-
-        full_dataset = Nina1Dataset(train_pkl)  # Передаем путь к pkl файлу
-        self.train_dataset, self.val_dataset = train_test_split(
-            full_dataset, test_size=0.3, random_state=21
+        """Загрузка данных и разделение на train/val/test"""
+        # Загрузка train и разделение на train/val
+        train_df = pd.read_pickle(self.train_pkl)
+        train_data, val_data = train_test_split(
+            train_df,
+            test_size=self.val_size,
+            random_state=42,
+            stratify=train_df["stimulus"],
         )
-        self.test_dataset = Nina1Dataset(test_pkl)
 
-    def teardown(self, stage: str) -> None:
-        """Вызывается в конце обучения (train + validate), валидации, тестирования или предсказания.
+        # Загрузка test
+        test_df = pd.read_pickle(self.test_pkl)
 
-        Args:
-            stage: either ``'fit'``, ``'validate'``, ``'test'``, or ``'predict'``
-        """
-        pass
+        # Создание датасетов
+        self.train_ds = Nina1Dataset(train_data)
+        self.val_ds = Nina1Dataset(val_data)
+        self.test_ds = Nina1Dataset(test_df)
 
-    def train_dataloader(self) -> torch.utils.data.DataLoader:
+        print(f"Train samples: {len(self.train_ds)}")
+        print(f"Val samples: {len(self.val_ds)}")
+        print(f"Test samples: {len(self.test_ds)}")
+
+    def train_dataloader(self):
         return torch.utils.data.DataLoader(
-            self.train_dataset,
-            batch_size=16,
+            self.train_ds,
+            batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
             persistent_workers=True,
         )
 
-    def val_dataloader(self) -> torch.utils.data.DataLoader:
+    def val_dataloader(self):
         return torch.utils.data.DataLoader(
-            self.val_dataset,
-            batch_size=16,
+            self.val_ds,
+            batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             persistent_workers=True,
         )
 
-    def test_dataloader(self) -> torch.utils.data.DataLoader:
+    def test_dataloader(self):
         return torch.utils.data.DataLoader(
-            self.test_dataset,
-            batch_size=16,
+            self.test_ds,
+            batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             persistent_workers=True,
@@ -180,9 +210,28 @@ class MyDataModule(pl.LightningDataModule):
 
 
 if __name__ == "__main__":
-    dm = MyDataModule()
-    dm.prepare_data()
+    # Абсолютный путь до корня проекта
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    DATA_ROOT = PROJECT_ROOT / "data"
+
+    train_path = DATA_ROOT / "train_data" / "ninaprodb1train.pkl"
+    test_path = DATA_ROOT / "test_data" / "ninaprodb1test.pkl"
+
+    print("Текущая рабочая директория:", os.getcwd())
+    print(f"Train path: {train_path} | Существует: {train_path.exists()}")
+    print(f"Test path: {test_path} | Существует: {test_path.exists()}")
+    print(f"Содержимое data/: {list(DATA_ROOT.glob('*/*'))}")
+
+    if not train_path.exists() or not test_path.exists():
+        raise RuntimeError("Файлы данных не найдены! Проверьте структуру папок")
+
+    # Передаём уже готовый абсолютный Path
+    dm = MyDataModule(data_root=DATA_ROOT, batch_size=32, num_workers=4, val_size=0.2)
+
     dm.setup()
-    train_loader = dm.train_dataloader()
-    batch = next(iter(train_loader))
-    print("Batch shape:", batch[0].shape)
+
+    # Проверка загрузки
+    batch = next(iter(dm.train_dataloader()))
+    print("Пример батча:")
+    print("EMG data shape:", batch[0].shape)  # [32, 25, 20, 10]
+    print("Labels shape:", batch[1].shape)  # [32]

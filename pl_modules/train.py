@@ -24,10 +24,10 @@ def main(config: DictConfig):
     pl.seed_everything(42)
 
     dm = MyDataModule(
-        train_path=config["data_loading"]["train_data_path"],
-        test_path=config["data_loading"]["test_data_path"],
+        data_root=config["data_loading"]["data_root"],
         batch_size=config["training"]["batch_size"],
         num_workers=config["training"]["num_workers"],
+        val_size=config["data_loading"]["val_size"],
     )
 
     model = EMGHandNet_classifier(
