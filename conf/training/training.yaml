@@ -1,11 +1,5 @@
-<<<<<<< HEAD
 batch_size: 128
 lr: 0.001
 num_workers: 8
-=======
-batch_size: 32
-lr: 0.001
-num_workers: 4
->>>>>>> 138de80 (попытка повысить точность)
 num_epochs: 100
 weight_decay: 0.001

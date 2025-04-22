@@ -60,24 +60,6 @@ class EMGHandNet_classifier(pl.LightningModule):
         acc = (preds.argmax(dim=1) == logits).float().mean()
         return acc.item()
 
-<<<<<<< HEAD
-    def configure_optimizers(self) -> Any:
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr, weight_decay=0.001)
-        scheduler = {
-            "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                max_lr=5e-4,
-                steps_per_epoch=100,
-                epochs=self.config["training"]["num_epochs"],
-                pct_start=0.2,
-                anneal_strategy="cos",
-                div_factor=10.0,
-                final_div_factor=1e2,
-                verbose=True,
-            ),
-            "monitor": "val_acc",
-            "interval": "step",
-=======
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
             self.parameters(),
@@ -100,5 +82,4 @@ class EMGHandNet_classifier(pl.LightningModule):
         return {
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
->>>>>>> 138de80 (попытка повысить точность)
         }
