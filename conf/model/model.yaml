@@ -1,1 +1,8 @@
-num_classes: 36
+num_classes: 17
+input_channels: 10
+cnn_filters: [64, 128, 256]
+kernel_sizes: [3, 3, 3]
+lstm_hidden_size: 200
+lstm_layers: 1
+fc_units: [512]
+dropout: 0.3

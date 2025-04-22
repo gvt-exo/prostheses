@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 import hydra
 import pytorch_lightning as pl
 import torch
@@ -23,8 +26,22 @@ def main(config: DictConfig):
     """
     pl.seed_everything(42)
 
+    # Получаем абсолютный путь к корню проекта
+    project_root = Path(__file__).resolve().parent.parent
+    data_root = project_root / "data"
+
+    print(f"Current working directory: {os.getcwd()}")
+    print(f"Project root: {project_root}")
+    print(f"Data root: {data_root}")
+    print(
+        f"Train path exists: {(data_root / 'train_data' / 'ninaprodb1train.pkl').exists()}"
+    )
+    print(
+        f"Test path exists: {(data_root / 'test_data' / 'ninaprodb1test.pkl').exists()}"
+    )
+
     dm = MyDataModule(
-        data_root=config["data_loading"]["data_root"],
+        data_root=str(data_root),
         batch_size=config["training"]["batch_size"],
         num_workers=config["training"]["num_workers"],
         val_size=config["data_loading"]["val_size"],

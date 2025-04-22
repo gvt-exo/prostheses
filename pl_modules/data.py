@@ -91,91 +91,73 @@ class Nina1Dataset(torch.utils.data.Dataset):
         # Аугментация данных (только для тренировочного сета)
         if self.is_train:
             # Базовая нормализация перед аугментацией
-            data = (data - np.mean(data)) / (np.std(data) + 1e-8)
-
-            # Применяем случайный набор аугментаций
-            augmentations = []
+            data = (data - np.mean(data, axis=0, keepdims=True)) / (
+                np.std(data, axis=0, keepdims=True) + 1e-8
+            )
 
             # 1. Масштабирование амплитуды (80% шанс)
             if np.random.random() < 0.8:
-                scale_factor = np.random.uniform(0.7, 1.3)
+                scale_factor = np.random.uniform(
+                    0.7, 1.3, size=data.shape[1]
+                )  # Per-channel scaling
                 data = data * scale_factor
-                augmentations.append("scale")
 
             # 2. Добавление шума (70% шанс)
             if np.random.random() < 0.7:
-                noise_types = ["gaussian", "uniform"]
-                noise_type = np.random.choice(noise_types)
-                if noise_type == "gaussian":
-                    noise_factor = np.random.uniform(0, 0.1)
-                    data = data + np.random.normal(0, noise_factor, data.shape)
-                else:
-                    noise_factor = np.random.uniform(0, 0.05)
-                    data = data + np.random.uniform(
-                        -noise_factor, noise_factor, data.shape
-                    )
-                augmentations.append(f"noise_{noise_type}")
+                noise_factor = np.random.uniform(0, 0.1)  # Reduced noise factor
+                data = data + np.random.normal(0, noise_factor, data.shape)
 
             # 3. Временной сдвиг (60% шанс)
             if np.random.random() < 0.6:
-                shift = np.random.randint(-25, 25)
+                shift = np.random.randint(-25, 25)  # Shift up to 5% of length
+                data = np.roll(data, shift, axis=0)
                 if shift > 0:
-                    data = np.roll(data, shift, axis=0)
-                    data[:shift] = 0
+                    data[:shift, :] = 0
                 elif shift < 0:
-                    data = np.roll(data, shift, axis=0)
-                    data[shift:] = 0
-                augmentations.append("shift")
+                    data[shift:, :] = 0
 
             # 4. Случайное обнуление каналов (30% шанс)
             if np.random.random() < 0.3:
                 num_channels = np.random.randint(1, 3)
                 channels = np.random.choice(data.shape[1], num_channels, replace=False)
                 data[:, channels] = 0
-                augmentations.append("channel_dropout")
 
-            # 5. Частотная модуляция (40% шанс)
-            if np.random.random() < 0.4:
-                # Применяем FFT
-                freq_data = np.fft.rfft(data, axis=0)
-                # Случайно модулируем частоты
-                freqs = np.fft.rfftfreq(data.shape[0])
-                mask = np.random.uniform(0.8, 1.2, size=len(freqs))
-                freq_data = freq_data * mask[:, np.newaxis]
-                # Обратное FFT
-                data = np.fft.irfft(freq_data, n=data.shape[0], axis=0)
-                augmentations.append("freq_mod")
+            # 5. Частотная модуляция (40% шанс) - simplified
+            # if np.random.random() < 0.4:
+            #     # This can be complex and sometimes unstable, skipping for now
+            #     pass
 
             # 6. Случайное зеркальное отражение (20% шанс)
             if np.random.random() < 0.2:
                 data = data[::-1].copy()
-                augmentations.append("flip")
 
-            # 7. Случайное изменение частоты дискретизации (50% шанс)
+            # 7. Случайное изменение частоты дискретизации (50% шанс) - simplified interp
             if np.random.random() < 0.5:
                 stretch_factor = np.random.uniform(0.9, 1.1)
                 new_length = int(data.shape[0] * stretch_factor)
-                indices = np.linspace(0, data.shape[0] - 1, new_length)
-                data = np.stack(
-                    [
-                        np.interp(indices, np.arange(data.shape[0]), data[:, i])
-                        for i in range(data.shape[1])
-                    ],
-                    axis=1,
-                )
+                x_old = np.linspace(0, 1, data.shape[0])
+                x_new = np.linspace(0, 1, new_length)
+                new_data = np.zeros((new_length, data.shape[1]))
+                for i in range(data.shape[1]):
+                    new_data[:, i] = np.interp(x_new, x_old, data[:, i])
+                data = new_data
+                # Pad or truncate back to 500
                 if new_length > 500:
-                    data = data[:500]
+                    data = data[:500, :]
                 elif new_length < 500:
                     data = np.pad(
                         data, ((0, 500 - new_length), (0, 0)), mode="constant"
                     )
-                augmentations.append("resample")
 
             # Повторная нормализация после аугментации
-            data = (data - np.mean(data)) / (np.std(data) + 1e-8)
+            data = (data - np.mean(data, axis=0, keepdims=True)) / (
+                np.std(data, axis=0, keepdims=True) + 1e-8
+            )
         else:
             # Для валидации и теста только нормализация
-            data = (data - np.mean(data)) / (np.std(data) + 1e-8)
+            data = (data - np.mean(data, axis=0, keepdims=True)) / (
+                np.std(data, axis=0, keepdims=True) + 1e-8
+            )
 
         # Изменение формы (25, 20, 10)
         input_data = data.reshape((25, 20, 10))
@@ -249,6 +231,9 @@ class MyDataModule(pl.LightningDataModule):
         if not self.test_pkl.exists():
             raise FileNotFoundError(f"Test file not found: {self.test_pkl}")
 
+        print(f"Train path: {self.train_pkl}")
+        print(f"Test path: {self.test_pkl}")
+
     def setup(self, stage: Optional[str] = None):
         """Загрузка данных и разделение на train/val/test"""
         # Загрузка train и разделение на train/val
@@ -258,6 +243,14 @@ class MyDataModule(pl.LightningDataModule):
         unique_classes = sorted(train_df["stimulus"].unique())
         print(f"Уникальные классы в данных: {unique_classes}")
         print(f"Количество уникальных классов: {len(unique_classes)}")
+
+        # Оставляем только первые 17 классов для соответствия архиву Тани
+        selected_classes = unique_classes[:17]
+        train_df = train_df[train_df["stimulus"].isin(selected_classes)]
+        print(f"Отобрано классов: {len(selected_classes)} -> {selected_classes}")
+
+        # Используем только эти классы далее
+        unique_classes = selected_classes
 
         # Создаем маппинг для преобразования меток в последовательный диапазон [0, num_classes-1]
         class_mapping = {
