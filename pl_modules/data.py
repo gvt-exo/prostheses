@@ -58,12 +58,14 @@ class MatToPklConverter:
 class Nina1Dataset(torch.utils.data.Dataset):
     """Кастомный класс, используемый для формирования датасета из данных для нашей задачи"""
 
-    def __init__(self, data: pd.DataFrame):
+    def __init__(self, data: pd.DataFrame, is_train: bool = True):
         """
         Args:
             data: DataFrame с колонками 'emg' и 'stimulus'
+            is_train: Флаг, указывающий, является ли датасет тренировочным
         """
         self.dataframe = data
+        self.is_train = is_train
 
         # Проверка структуры данных
         if not all(col in data.columns for col in ["emg", "stimulus"]):
@@ -85,6 +87,95 @@ class Nina1Dataset(torch.utils.data.Dataset):
         data = emg[:500]
         if len(data) < 500:
             data = np.concatenate((data, np.zeros((500 - len(data), 10))), axis=0)
+
+        # Аугментация данных (только для тренировочного сета)
+        if self.is_train:
+            # Базовая нормализация перед аугментацией
+            data = (data - np.mean(data)) / (np.std(data) + 1e-8)
+
+            # Применяем случайный набор аугментаций
+            augmentations = []
+
+            # 1. Масштабирование амплитуды (80% шанс)
+            if np.random.random() < 0.8:
+                scale_factor = np.random.uniform(0.7, 1.3)
+                data = data * scale_factor
+                augmentations.append("scale")
+
+            # 2. Добавление шума (70% шанс)
+            if np.random.random() < 0.7:
+                noise_types = ["gaussian", "uniform"]
+                noise_type = np.random.choice(noise_types)
+                if noise_type == "gaussian":
+                    noise_factor = np.random.uniform(0, 0.1)
+                    data = data + np.random.normal(0, noise_factor, data.shape)
+                else:
+                    noise_factor = np.random.uniform(0, 0.05)
+                    data = data + np.random.uniform(
+                        -noise_factor, noise_factor, data.shape
+                    )
+                augmentations.append(f"noise_{noise_type}")
+
+            # 3. Временной сдвиг (60% шанс)
+            if np.random.random() < 0.6:
+                shift = np.random.randint(-25, 25)
+                if shift > 0:
+                    data = np.roll(data, shift, axis=0)
+                    data[:shift] = 0
+                elif shift < 0:
+                    data = np.roll(data, shift, axis=0)
+                    data[shift:] = 0
+                augmentations.append("shift")
+
+            # 4. Случайное обнуление каналов (30% шанс)
+            if np.random.random() < 0.3:
+                num_channels = np.random.randint(1, 3)
+                channels = np.random.choice(data.shape[1], num_channels, replace=False)
+                data[:, channels] = 0
+                augmentations.append("channel_dropout")
+
+            # 5. Частотная модуляция (40% шанс)
+            if np.random.random() < 0.4:
+                # Применяем FFT
+                freq_data = np.fft.rfft(data, axis=0)
+                # Случайно модулируем частоты
+                freqs = np.fft.rfftfreq(data.shape[0])
+                mask = np.random.uniform(0.8, 1.2, size=len(freqs))
+                freq_data = freq_data * mask[:, np.newaxis]
+                # Обратное FFT
+                data = np.fft.irfft(freq_data, n=data.shape[0], axis=0)
+                augmentations.append("freq_mod")
+
+            # 6. Случайное зеркальное отражение (20% шанс)
+            if np.random.random() < 0.2:
+                data = data[::-1].copy()
+                augmentations.append("flip")
+
+            # 7. Случайное изменение частоты дискретизации (50% шанс)
+            if np.random.random() < 0.5:
+                stretch_factor = np.random.uniform(0.9, 1.1)
+                new_length = int(data.shape[0] * stretch_factor)
+                indices = np.linspace(0, data.shape[0] - 1, new_length)
+                data = np.stack(
+                    [
+                        np.interp(indices, np.arange(data.shape[0]), data[:, i])
+                        for i in range(data.shape[1])
+                    ],
+                    axis=1,
+                )
+                if new_length > 500:
+                    data = data[:500]
+                elif new_length < 500:
+                    data = np.pad(
+                        data, ((0, 500 - new_length), (0, 0)), mode="constant"
+                    )
+                augmentations.append("resample")
+
+            # Повторная нормализация после аугментации
+            data = (data - np.mean(data)) / (np.std(data) + 1e-8)
+        else:
+            # Для валидации и теста только нормализация
+            data = (data - np.mean(data)) / (np.std(data) + 1e-8)
 
         # Изменение формы (25, 20, 10)
         input_data = data.reshape((25, 20, 10))
@@ -162,6 +253,22 @@ class MyDataModule(pl.LightningDataModule):
         """Загрузка данных и разделение на train/val/test"""
         # Загрузка train и разделение на train/val
         train_df = pd.read_pickle(self.train_pkl)
+
+        # Анализ уникальных меток
+        unique_classes = sorted(train_df["stimulus"].unique())
+        print(f"Уникальные классы в данных: {unique_classes}")
+        print(f"Количество уникальных классов: {len(unique_classes)}")
+
+        # Создаем маппинг для преобразования меток в последовательный диапазон [0, num_classes-1]
+        class_mapping = {
+            old_label: idx
+            for idx, old_label in enumerate(sorted(set(train_df["stimulus"].unique())))
+        }
+        print(f"Маппинг классов: {class_mapping}")
+
+        # Применяем маппинг к меткам
+        train_df["stimulus"] = train_df["stimulus"].map(class_mapping)
+
         train_data, val_data = train_test_split(
             train_df,
             test_size=self.val_size,
@@ -169,8 +276,18 @@ class MyDataModule(pl.LightningDataModule):
             stratify=train_df["stimulus"],
         )
 
-        # Загрузка test
+        # Загрузка test и применение того же маппинга
         test_df = pd.read_pickle(self.test_pkl)
+        test_df["stimulus"] = test_df["stimulus"].map(class_mapping)
+
+        # Проверяем, что все метки в правильном диапазоне
+        all_labels = set(train_df["stimulus"].unique()) | set(
+            test_df["stimulus"].unique()
+        )
+        print(f"Все метки после маппинга: {sorted(all_labels)}")
+        assert max(all_labels) < len(
+            unique_classes
+        ), "Метки классов вне допустимого диапазона"
 
         # Создание датасетов
         self.train_ds = Nina1Dataset(train_data)
