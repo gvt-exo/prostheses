@@ -1,96 +1,124 @@
+"""Модуль, содержащий основную архитектуру нейронной сети для классификации ЭМГ.
+
+Этот модуль определяет класс EMGHandNet, который реализует гибридную архитектуру
+CNN-LSTM для обработки и классификации электромиографических сигналов.
+"""
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class EMGHandNet(nn.Module):
-    """Тут описывается основное ядро архитектуры, именно её слои и методы forward.
-    Далее это ядро передается в файл модели обучения model.py, где указываются
-    парамеры уже обучения.
+    """Архитектура нейронной сети для классификации ЭМГ сигналов.
+
+    Состоит из последовательности сверточных слоев, LSTM и полносвязных слоев.
     """
 
     def __init__(
         self,
+        cnn_filters=None,
+        kernel_sizes=None,
+        fc_units=None,
         num_classes=17,
-        input_channels=10,  # Количество каналов на входе (например, 10 для ЭМГ)
-        cnn_filters=[64, 128, 256],  # Увеличиваем количество фильтров
-        kernel_sizes=[3, 3, 3],  # Размеры ядер сверточных слоев
-        lstm_hidden_size=200,  # Увеличиваем размер LSTM
-        lstm_layers=1,  # Количество слоев в LSTM
-        fc_units=[512],  # Количество нейронов в слоях после LSTM
-        dropout=0.3,  # Уменьшаем dropout
     ):
-        super(EMGHandNet, self).__init__()
+        """Инициализация модели.
 
-        # Модифицированная CNN часть с настраиваемыми параметрами
-        self.cnn = nn.Sequential(
-            nn.Conv1d(
-                input_channels,
-                cnn_filters[0],
-                kernel_size=kernel_sizes[0],
-                stride=2,
-                padding=1,
-            ),
-            nn.Tanh(),
-            nn.MaxPool1d(kernel_size=2, stride=2),
-            nn.Conv1d(
-                cnn_filters[0],
-                cnn_filters[1],
-                kernel_size=kernel_sizes[1],
-                stride=1,
-                padding=1,
-            ),
-            nn.Tanh(),
-            nn.BatchNorm1d(cnn_filters[1]),
-            nn.Conv1d(
-                cnn_filters[1],
-                cnn_filters[2],
-                kernel_size=kernel_sizes[2],
-                stride=2,
-                padding=1,
-            ),
-            nn.Tanh(),
-            nn.BatchNorm1d(cnn_filters[2]),
-            nn.AdaptiveAvgPool1d(4),  # Фиксирует выходной размер
-            nn.Flatten(),
-        )
+        Args:
+            cnn_filters: Список количества фильтров для CNN слоев
+            kernel_sizes: Список размеров ядер для CNN слоев
+            fc_units: Список размеров полносвязных слоев
+            num_classes: Количество классов для классификации
+        """
+        super().__init__()
 
-        # Bi-LSTM часть + настраиваемые параметры
-        self.bilstm = nn.LSTM(
+        # Значения по умолчанию
+        if cnn_filters is None:
+            cnn_filters = [32, 64, 128]
+        if kernel_sizes is None:
+            kernel_sizes = [3, 3, 3]
+        if fc_units is None:
+            fc_units = [256, 128]
+
+        # Проверка входных параметров
+        if len(cnn_filters) != len(kernel_sizes):
+            raise ValueError(
+                "Количество фильтров должно совпадать с количеством размеров ядер"
+            )
+
+        # Сверточные слои
+        self.cnn_layers = nn.ModuleList()
+        in_channels = 10  # Начальное количество каналов
+
+        for i, (filters, kernel_size) in enumerate(zip(cnn_filters, kernel_sizes)):
+            self.cnn_layers.append(
+                nn.Sequential(
+                    nn.Conv2d(
+                        in_channels,
+                        filters,
+                        kernel_size=(kernel_size, kernel_size),
+                        padding="same",
+                    ),
+                    nn.BatchNorm2d(filters),
+                    nn.ReLU(),
+                    nn.MaxPool2d(kernel_size=2, stride=2),
+                )
+            )
+            in_channels = filters
+
+        # LSTM слой
+        self.lstm = nn.LSTM(
             input_size=cnn_filters[2]
             * 4,  # Применяется для соответствия размерности после CNN
-            hidden_size=lstm_hidden_size,
-            num_layers=lstm_layers,  # Количество слоев в LSTM
-            bidirectional=True,
+            hidden_size=128,
+            num_layers=2,
             batch_first=True,
+            bidirectional=True,
         )
-
-        # Полносвязные слои + настраиваемые параметры
-        self.fc = nn.Sequential(
-            nn.Linear(lstm_hidden_size * 2, fc_units[0]),  # *2 для bi-LSTM
-            nn.Tanh(),
-            nn.Dropout(dropout),
-            nn.Linear(fc_units[0], num_classes),
-        )
-
-    def forward(self, x):
-        batch_size = x.size(0)
-
-        # Обработка временных окон
-        x = x.view(batch_size * 25, 20, 10)  # [batch*25, 20, 10]
-        x = x.permute(0, 2, 1)  # [batch*25, 10, 20]
-
-        # CNN обработка
-        x = self.cnn(x)
-
-        # Подготовка к LSTM
-        x = x.view(batch_size, 25, -1)  # [batch, 25, 1024]
-
-        # Bi-LSTM
-        x, _ = self.bilstm(x)
-        x = x[:, -1, :]  # Берем последний временной шаг
 
         # Полносвязные слои
-        x = self.fc(x)
+        self.fc_layers = nn.ModuleList()
+        lstm_output_size = 256  # 128 * 2 (bidirectional)
+
+        for units in fc_units:
+            self.fc_layers.append(
+                nn.Sequential(
+                    nn.Linear(lstm_output_size, units),
+                    nn.BatchNorm1d(units),
+                    nn.ReLU(),
+                    nn.Dropout(0.3),
+                )
+            )
+            lstm_output_size = units
+
+        # Выходной слой
+        self.fc_out = nn.Linear(lstm_output_size, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Прямой проход модели.
+
+        Args:
+            x: Входные данные [batch_size, 25, 20, 10]
+
+        Returns:
+            Выход модели [batch_size, num_classes]
+        """
+        # Применяем сверточные слои
+        for cnn_layer in self.cnn_layers:
+            x = cnn_layer(x)
+
+        # Подготовка данных для LSTM
+        batch_size = x.size(0)
+        x = x.reshape(batch_size, -1, x.size(1) * x.size(2))
+
+        # Применяем LSTM
+        lstm_out, _ = self.lstm(x)
+        x = lstm_out[:, -1, :]  # Берем последний выход LSTM
+
+        # Применяем полносвязные слои
+        for fc_layer in self.fc_layers:
+            x = fc_layer(x)
+
+        # Выходной слой
+        x = self.fc_out(x)
 
         return x

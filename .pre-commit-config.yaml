@@ -25,11 +25,16 @@ repos:
         args: ["--profile", "black"]
 
   - repo: https://github.com/PyCQA/flake8
-    rev: 7.2.0
+    rev: 7.0.0
     hooks:
       - id: flake8
-        additional_dependencies: [flake8-bugbear]
-        args: ["--ignore=E501,F401"]
+        args:
+          [
+            "--ignore=W503,E203,E501,B007",
+            "--max-line-length=88",
+            "--exclude=.git,__pycache__,build,dist",
+          ]
+        additional_dependencies: [flake8-docstrings]
 
   - repo: https://github.com/nbQA-dev/nbQA
     rev: 1.9.1

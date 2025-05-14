@@ -1,65 +1,34 @@
+"""
+Модуль для работы с данными ЭМГ.
+
+Этот модуль содержит классы и функции для загрузки,
+предобработки и аугментации данных электромиографии.
+Включает в себя датасеты для обучения и валидации,
+а также методы для работы с временными окнами.
+"""
+
 import os
-from glob import glob
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
-import scipy.io
 import torch
 from sklearn.model_selection import train_test_split
+from torch.utils.data import Dataset
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_ROOT = PROJECT_ROOT / "data"
 
 
-class MatToPklConverter:
-    """Конвертирует .mat файлы в train/test .pkl"""
-
-    @staticmethod
-    def convert_folder(
-        input_dir: str, output_train: str, output_test: str, test_size: float = 0.2
-    ):
-        """
-        Args:
-            input_dir: Папка с .mat файлами
-            output_train: Путь для сохранения train.pkl
-            output_test: Путь для сохранения test.pkl
-            test_size: Доля тестовых данных
-        """
-        input_dir = Path(input_dir)
-        records = []
-
-        # Чтение .mat файлов
-        for mat_file in input_dir.glob("*.mat"):
-            data = scipy.io.loadmat(str(mat_file))
-            emg = data["emg"]
-            stimulus = data["stimulus"].flatten()
-
-            for i in range(len(stimulus)):
-                if stimulus[i] != 0:  # Пропускаем покой
-                    records.append({"emg": emg[i], "stimulus": int(stimulus[i])})
-
-        # Разделение на train/test
-        df = pd.DataFrame(records)
-        train_df, test_df = train_test_split(
-            df, test_size=test_size, random_state=42, stratify=df["stimulus"]
-        )
-
-        # Сохранение
-        train_df.to_pickle(output_train)
-        test_df.to_pickle(output_test)
-        print(f"Сохранено: {output_train} ({len(train_df)} записей)")
-        print(f"Сохранено: {output_test} ({len(test_df)} записей)")
-
-
-class Nina1Dataset(torch.utils.data.Dataset):
-    """Кастомный класс, используемый для формирования датасета из данных для нашей задачи"""
+class Nina1Dataset(Dataset):
+    """Кастомный класс, используемый для формирования датасета из данных для нашей задачи."""
 
     def __init__(self, data: pd.DataFrame, is_train: bool = True):
-        """
+        """Инициализация датасета.
+
         Args:
             data: DataFrame с колонками 'emg' и 'stimulus'
             is_train: Флаг, указывающий, является ли датасет тренировочным
@@ -71,19 +40,17 @@ class Nina1Dataset(torch.utils.data.Dataset):
         if not all(col in data.columns for col in ["emg", "stimulus"]):
             raise ValueError("DataFrame must contain 'emg' and 'stimulus' columns")
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Возвращает количество примеров в датасете."""
         return len(self.dataframe)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Возвращает пример из датасета по индексу."""
         row = self.dataframe.iloc[idx]
         emg = row["emg"]
         stimulus = row["stimulus"]
-
-        # Обработка EMG сигнала
         if isinstance(emg, list) and len(emg) == 1:
             emg = emg[0]
-
-        # Дополнение нулями до 500 отсчетов
         data = emg[:500]
         if len(data) < 500:
             data = np.concatenate((data, np.zeros((500 - len(data), 10))), axis=0)
@@ -97,19 +64,17 @@ class Nina1Dataset(torch.utils.data.Dataset):
 
             # 1. Масштабирование амплитуды (80% шанс)
             if np.random.random() < 0.8:
-                scale_factor = np.random.uniform(
-                    0.7, 1.3, size=data.shape[1]
-                )  # Per-channel scaling
+                scale_factor = np.random.uniform(0.7, 1.3, size=data.shape[1])
                 data = data * scale_factor
 
             # 2. Добавление шума (70% шанс)
             if np.random.random() < 0.7:
-                noise_factor = np.random.uniform(0, 0.1)  # Reduced noise factor
+                noise_factor = np.random.uniform(0, 0.1)
                 data = data + np.random.normal(0, noise_factor, data.shape)
 
             # 3. Временной сдвиг (60% шанс)
             if np.random.random() < 0.6:
-                shift = np.random.randint(-25, 25)  # Shift up to 5% of length
+                shift = np.random.randint(-25, 25)
                 data = np.roll(data, shift, axis=0)
                 if shift > 0:
                     data[:shift, :] = 0
@@ -122,16 +87,11 @@ class Nina1Dataset(torch.utils.data.Dataset):
                 channels = np.random.choice(data.shape[1], num_channels, replace=False)
                 data[:, channels] = 0
 
-            # 5. Частотная модуляция (40% шанс) - simplified
-            # if np.random.random() < 0.4:
-            #     # This can be complex and sometimes unstable, skipping for now
-            #     pass
-
             # 6. Случайное зеркальное отражение (20% шанс)
             if np.random.random() < 0.2:
                 data = data[::-1].copy()
 
-            # 7. Случайное изменение частоты дискретизации (50% шанс) - simplified interp
+            # 7. Случайное изменение частоты дискретизации (50% шанс)
             if np.random.random() < 0.5:
                 stretch_factor = np.random.uniform(0.9, 1.1)
                 new_length = int(data.shape[0] * stretch_factor)
@@ -169,37 +129,7 @@ class Nina1Dataset(torch.utils.data.Dataset):
 
 
 class MyDataModule(pl.LightningDataModule):
-    """В этом файле ведется вся работы с данными. Для этого есть специальный встроенный модуль.
-    Модуль DataModule стандартизирует разбиение на train, test, val, подготовку данных и
-    их преобразование. Основным преимуществом является согласованное разбиение данных,
-    подготовка данных и преобразования в разных моделях.
-
-    Пример::
-
-        class MyDataModule(LightningDataModule):
-            def __init__(self):
-                super().__init__()
-            def prepare_data(self):
-                # скачивание, разбиение, и т.д....
-                # вызывается только на 1 GPU/TPU при распределении
-            def setup(self, stage):
-                # разбиение и доп.операции с выборками (val/train/test)
-                # вызывается на каждом процессе DDP
-            def train_dataloader(self):
-                train_split = Dataset(...)
-                return DataLoader(train_split)
-            def val_dataloader(self):
-                val_split = Dataset(...)
-                return DataLoader(val_split)
-            def test_dataloader(self):
-                test_split = Dataset(...)
-                return DataLoader(test_split)
-            def teardown(self):
-                # отчистка после валидации или тестирования
-                # вызывается на каждом процессе DDP
-    """
-
-    """DataModule для работы с готовыми .pkl файлами"""
+    """DataModule для работы с готовыми .pkl файлами."""
 
     def __init__(
         self,
@@ -208,7 +138,8 @@ class MyDataModule(pl.LightningDataModule):
         num_workers: int = 4,
         val_size: float = 0.2,
     ):
-        """
+        """Инициализация модуля данных.
+
         Args:
             data_root: Корневая папка с данными
             batch_size: Размер батча
@@ -235,7 +166,7 @@ class MyDataModule(pl.LightningDataModule):
         print(f"Test path: {self.test_pkl}")
 
     def setup(self, stage: Optional[str] = None):
-        """Загрузка данных и разделение на train/val/test"""
+        """Загрузка данных и разделение на train/val/test."""
         # Загрузка train и разделение на train/val
         train_df = pd.read_pickle(self.train_pkl)
 
@@ -252,7 +183,7 @@ class MyDataModule(pl.LightningDataModule):
         # Используем только эти классы далее
         unique_classes = selected_classes
 
-        # Создаем маппинг для преобразования меток в последовательный диапазон [0, num_classes-1]
+        # Создаем маппинг для преобразования меток
         class_mapping = {
             old_label: idx
             for idx, old_label in enumerate(sorted(set(train_df["stimulus"].unique())))
@@ -291,7 +222,8 @@ class MyDataModule(pl.LightningDataModule):
         print(f"Val samples: {len(self.val_ds)}")
         print(f"Test samples: {len(self.test_ds)}")
 
-    def train_dataloader(self):
+    def train_dataloader(self) -> torch.utils.data.DataLoader:
+        """Возвращает загрузчик данных для обучения."""
         return torch.utils.data.DataLoader(
             self.train_ds,
             batch_size=self.batch_size,
@@ -300,7 +232,8 @@ class MyDataModule(pl.LightningDataModule):
             persistent_workers=True,
         )
 
-    def val_dataloader(self):
+    def val_dataloader(self) -> torch.utils.data.DataLoader:
+        """Возвращает загрузчик данных для валидации."""
         return torch.utils.data.DataLoader(
             self.val_ds,
             batch_size=self.batch_size,
@@ -309,7 +242,8 @@ class MyDataModule(pl.LightningDataModule):
             persistent_workers=True,
         )
 
-    def test_dataloader(self):
+    def test_dataloader(self) -> torch.utils.data.DataLoader:
+        """Возвращает загрузчик данных для тестирования."""
         return torch.utils.data.DataLoader(
             self.test_ds,
             batch_size=self.batch_size,
@@ -336,7 +270,7 @@ if __name__ == "__main__":
         raise RuntimeError("Файлы данных не найдены! Проверьте структуру папок")
 
     # Передаём уже готовый абсолютный Path
-    dm = MyDataModule(data_root=DATA_ROOT, batch_size=32, num_workers=4, val_size=0.2)
+    dm = MyDataModule(data_root=DATA_ROOT, batch_size=32, num_workers=4)
 
     dm.setup()
 

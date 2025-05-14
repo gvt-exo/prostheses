@@ -1,4 +1,10 @@
-import os
+"""Модуль для обучения модели классификации ЭМГ сигналов.
+
+Этот модуль содержит функции и классы для настройки и запуска
+процесса обучения нейронной сети. Включает в себя конфигурацию
+модели, логирование и сохранение результатов.
+"""
+
 from pathlib import Path
 
 import hydra
@@ -7,78 +13,93 @@ import torch
 from core_arch import EMGHandNet
 from data import MyDataModule
 from model import EMGHandNet_classifier
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+from pytorch_lightning.callbacks import (
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
+from pytorch_lightning.loggers import TensorBoardLogger
 
 
 torch.set_float32_matmul_precision("medium")
 
 
-@hydra.main(version_base=None, config_path="../conf", config_name="config")
-def main(config: DictConfig):
-    """В этом модуле описывается процесс обучения в динамике.
-    Указываются логгеры и коллбэки, модели обучения и т.д.
-    Само обучение реализуется с помощью модуля Pytorch Lightning Trainer.
-    В нем дополнительно указываются настройки, такие как активация/дизактивация логера,
-    девайс обучения, и прочие фишки, типа антивзрыва градиента.
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def train(config: DictConfig) -> None:
+    """Запускает процесс обучения модели.
 
-    Все константы, как в этом, так и в предыдущих файлах вынесены в конфигурационные файлы,
-    одноименные с названием модуля и расположенные в папке conf.
+    Args:
+        config: Конфигурация обучения, загружаемая через Hydra
     """
-    pl.seed_everything(42)
+    # Создаем директорию для логов
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
 
-    # Получаем абсолютный путь к корню проекта
-    project_root = Path(__file__).resolve().parent.parent
-    data_root = project_root / "data"
-
-    print(f"Current working directory: {os.getcwd()}")
-    print(f"Project root: {project_root}")
-    print(f"Data root: {data_root}")
-    print(
-        f"Train path exists: {(data_root / 'train_data' / 'ninaprodb1train.pkl').exists()}"
-    )
-    print(
-        f"Test path exists: {(data_root / 'test_data' / 'ninaprodb1test.pkl').exists()}"
+    # Инициализируем логгер
+    logger = TensorBoardLogger(
+        save_dir=str(log_dir),
+        name=config.model.name,
+        version=None,
     )
 
-    dm = MyDataModule(
-        data_root=str(data_root),
-        batch_size=config["training"]["batch_size"],
-        num_workers=config["training"]["num_workers"],
-        val_size=config["data_loading"]["val_size"],
+    # Создаем модель
+    model = EMGHandNet(
+        num_classes=config.model.num_classes,
+        input_channels=config.model.input_channels,
     )
-
-    model = EMGHandNet_classifier(
-        EMGHandNet(num_classes=config["model"]["num_classes"]),
-        lr=config["training"]["lr"],
+    classifier = EMGHandNet_classifier(
+        model=model,
+        lr=config.training.lr,
         config=config,
     )
 
-    loggers = [
-        pl.loggers.WandbLogger(
-            project=config["logging"]["project"],
-            name=config["logging"]["name"],
-            save_dir=config["logging"]["save_dir"],
+    # Настраиваем колбэки
+    callbacks = [
+        EarlyStopping(
+            monitor="val_loss",
+            patience=config.training.early_stopping_patience,
+            mode="min",
+        ),
+        LearningRateMonitor(logging_interval="step"),
+        ModelCheckpoint(
+            dirpath=log_dir / config.model.name,
+            filename="{epoch}-{val_loss:.2f}",
+            monitor="val_loss",
+            mode="min",
+            save_top_k=3,
         ),
     ]
 
-    callbacks = [
-        pl.callbacks.LearningRateMonitor(logging_interval="step"),
-        # pl.callbacks.DeviceStatsMonitor(),
-        pl.callbacks.RichModelSummary(max_depth=2),
-    ]
-
+    # Создаем тренер
     trainer = pl.Trainer(
-        max_epochs=config["training"]["num_epochs"],
-        logger=loggers,
-        log_every_n_steps=1,
+        max_epochs=config.training.max_epochs,
+        accelerator=config.training.accelerator,
+        devices=config.training.devices,
+        logger=logger,
         callbacks=callbacks,
-        accelerator="auto",
-        devices="auto",
-        gradient_clip_val=1.0,
+        log_every_n_steps=config.training.log_every_n_steps,
     )
 
-    trainer.fit(model, datamodule=dm)
+    # Инициализируем модуль данных
+    data_module = MyDataModule(
+        data_root=config.data.data_dir,
+        batch_size=config.training.batch_size,
+        num_workers=config.training.num_workers,
+    )
+
+    # Запускаем обучение
+    trainer.fit(
+        model=classifier,
+        datamodule=data_module,
+    )
+
+    # Сохраняем конфигурацию
+    OmegaConf.save(
+        config=config,
+        f=log_dir / config.model.name / "config.yaml",
+    )
 
 
 if __name__ == "__main__":
-    main()
+    train()
