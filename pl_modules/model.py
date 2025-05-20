@@ -24,13 +24,7 @@ class EMGHandNet_classifier(pl.LightningModule):
     - Методы для тренировки и валидации
     - Вычисление гессиана для анализа обучения
     - Настройку оптимизатора и планировщика скорости обучения
-
-    Attributes:
-        model: Базовая модель нейронной сети
-        lr: Базовая скорость обучения
-        config: Конфигурация модели
-        hessian_compute_counter: Счетчик для контроля частоты вычисления гессиана
-        hessian_compute_frequency: Частота вычисления гессиана (в эпохах)
+    - Работу с матрицей вероятностей для каждого окна
     """
 
     def __init__(
@@ -38,6 +32,8 @@ class EMGHandNet_classifier(pl.LightningModule):
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-5,
         hessian_freq: int = 10,
+        window_size: int = 500,  # Размер входного окна
+        sliding_window_size: int = 25,  # Размер скользящего окна
     ):
         """Инициализация модели.
 
@@ -45,24 +41,32 @@ class EMGHandNet_classifier(pl.LightningModule):
             learning_rate: Скорость обучения
             weight_decay: Коэффициент регуляризации
             hessian_freq: Частота вычисления гессиана
+            window_size: Размер входного окна (количество сэмплов)
+            sliding_window_size: Размер скользящего окна для LSTM
         """
         super().__init__()
         self.save_hyperparameters()
 
-        # Инициализация модели
-        self.model = EMGHandNet()
+        # Инициализация модели с гибкими параметрами размеров
+        self.model = EMGHandNet(
+            window_size=window_size, sliding_window_size=sliding_window_size
+        )
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.hessian_freq = hessian_freq
 
-        # Метрики
-        self.train_acc = pl.metrics.Accuracy()
-        self.val_acc = pl.metrics.Accuracy()
-        self.test_acc = pl.metrics.Accuracy()
+        # Метрики для отслеживания точности
+        self.train_acc = pl.metrics.Accuracy()  # Общая точность
+        self.val_acc = pl.metrics.Accuracy()  # Точность на валидации
+        self.test_acc = pl.metrics.Accuracy()  # Точность на тесте
 
         # Для гессиана
         self.hessian_condition_number = None
         self.hessian_trace = None
+
+        # История матриц вероятностей для анализа
+        # Каждый элемент - матрица размером [sliding_window_size, num_classes]
+        self.probability_matrix_history = []
 
     def compute_hessian(self, loss: torch.Tensor) -> Tuple[float, float]:
         """Вычисляет гессиан функции потерь.
@@ -99,14 +103,35 @@ class EMGHandNet_classifier(pl.LightningModule):
             logging.error(f"Ошибка при вычислении гессиана: {e}")
             return 0.0, 0.0
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def compute_window_accuracy(
+        self, probs: torch.Tensor, targets: torch.Tensor
+    ) -> float:
+        """Вычисляет точность классификации для каждого окна.
+
+        Args:
+            probs: Матрица вероятностей [sliding_window_size, num_classes]
+                  Каждая строка - вероятности классов для одного окна
+            targets: Целевые метки [batch_size]
+                    Одна метка для всего батча
+
+        Returns:
+            Средняя точность по всем окнам (от 0 до 1)
+        """
+        # Получаем предсказания для каждого окна
+        predictions = probs.argmax(dim=1)  # [sliding_window_size]
+        # Сравниваем с целевой меткой и усредняем
+        correct = (predictions == targets).float().mean()
+        return correct.item()
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Прямой проход модели.
 
         Args:
-            x: Входные данные [batch_size, 25, 20, 10]
+            x: Входные данные [batch_size, window_size, num_channels]
+               или [batch_size, sliding_window_size, window_size, num_channels]
 
         Returns:
-            Выход модели [batch_size, num_classes]
+            Кортеж (предсказания, матрица вероятностей)
         """
         return self.model(x)
 
@@ -120,16 +145,27 @@ class EMGHandNet_classifier(pl.LightningModule):
             batch_idx: Индекс батча
 
         Returns:
-            Словарь с метриками
+            Словарь с метриками, включая:
+            - loss: значение функции потерь
+            - train_acc: общая точность
+            - train_window_acc: точность по окнам
         """
         x, y = batch
-        logits = self(x)
+        # Получаем предсказания и матрицу вероятностей
+        logits, prob_matrix = self(x)
         loss = F.cross_entropy(logits, y)
 
         # Обновление метрик
-        self.train_acc(logits, y)
+        self.train_acc(logits, y)  # Общая точность
+        window_acc = self.compute_window_accuracy(prob_matrix, y)  # Точность по окнам
+
+        # Сохраняем матрицу вероятностей для последующего анализа
+        self.probability_matrix_history.append(prob_matrix.detach().cpu())
+
+        # Логируем метрики
         self.log("train_loss", loss, prog_bar=True)
         self.log("train_acc", self.train_acc, prog_bar=True)
+        self.log("train_window_acc", window_acc, prog_bar=True)
 
         # Гессиан (редко)
         if batch_idx % self.hessian_freq == 0:
@@ -152,13 +188,16 @@ class EMGHandNet_classifier(pl.LightningModule):
             Словарь с метриками
         """
         x, y = batch
-        logits = self(x)
+        logits, prob_matrix = self(x)
         loss = F.cross_entropy(logits, y)
 
         # Обновление метрик
         self.val_acc(logits, y)
+        window_acc = self.compute_window_accuracy(prob_matrix, y)
+
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", self.val_acc, prog_bar=True)
+        self.log("val_window_acc", window_acc, prog_bar=True)
 
         # Гессиан (редко)
         if batch_idx % self.hessian_freq == 0:
@@ -181,17 +220,22 @@ class EMGHandNet_classifier(pl.LightningModule):
             Словарь с метриками
         """
         x, y = batch
-        logits = self(x)
+        logits, prob_matrix = self(x)
         loss = F.cross_entropy(logits, y)
 
         # Обновление метрик
         self.test_acc(logits, y)
+        window_acc = self.compute_window_accuracy(prob_matrix, y)
+
         self.log("test_loss", loss, prog_bar=True)
         self.log("test_acc", self.test_acc, prog_bar=True)
+        self.log("test_window_acc", window_acc, prog_bar=True)
 
         return {"test_loss": loss}
 
-    def predict_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
+    def predict_step(
+        self, batch: torch.Tensor, batch_idx: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Шаг предсказания.
 
         Args:
@@ -199,7 +243,7 @@ class EMGHandNet_classifier(pl.LightningModule):
             batch_idx: Индекс батча
 
         Returns:
-            Предсказания модели
+            Кортеж (предсказания, матрица вероятностей)
         """
         return self(batch)
 

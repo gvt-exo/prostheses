@@ -26,34 +26,82 @@ DATA_ROOT = PROJECT_ROOT / "data"
 class Nina1Dataset(Dataset):
     """Кастомный класс, используемый для формирования датасета из данных для нашей задачи."""
 
-    def __init__(self, data: pd.DataFrame, is_train: bool = True):
+    def __init__(
+        self,
+        data: pd.DataFrame,
+        window_size: int = 500,  # Размер окна для сегментации сигнала
+        sliding_window_size: int = 25,  # Размер скользящего окна
+        step_size: int = 1,  # Шаг для скользящего окна
+        is_train: bool = True,
+    ):
         """Инициализация датасета.
 
         Args:
             data: DataFrame с колонками 'emg' и 'stimulus'
+            window_size: Размер окна для сегментации сигнала (количество сэмплов)
+            sliding_window_size: Размер скользящего окна для LSTM
+            step_size: Шаг для скользящего окна (количество сэмплов)
             is_train: Флаг, указывающий, является ли датасет тренировочным
         """
         self.dataframe = data
+        # Параметры для гибкой настройки размеров окон
+        self.window_size = window_size
+        self.sliding_window_size = sliding_window_size
+        self.step_size = step_size
         self.is_train = is_train
 
         # Проверка структуры данных
         if not all(col in data.columns for col in ["emg", "stimulus"]):
             raise ValueError("DataFrame must contain 'emg' and 'stimulus' columns")
 
+        # Предварительная обработка данных
+        # Создаем списки для хранения обработанных окон и меток
+        self.processed_data = []
+        self.processed_labels = []
+
+        # Обрабатываем каждый пример в датасете
+        for idx in range(len(data)):
+            row = data.iloc[idx]
+            emg = row["emg"]
+            stimulus = row["stimulus"]
+
+            # Обработка случая, когда emg - список
+            if isinstance(emg, list) and len(emg) == 1:
+                emg = emg[0]
+
+            # Обрезаем или дополняем сигнал до window_size
+            if len(emg) > window_size:
+                emg = emg[:window_size]  # Обрезаем лишние сэмплы
+            elif len(emg) < window_size:
+                # Дополняем нулями до нужного размера
+                emg = np.pad(
+                    emg, ((0, window_size - len(emg)), (0, 0)), mode="constant"
+                )
+
+            # Создаем скользящие окна с заданным шагом
+            # Для каждого окна создаем отдельный пример
+            for i in range(0, window_size - sliding_window_size + 1, step_size):
+                window = emg[i : i + sliding_window_size]  # Вырезаем окно
+                self.processed_data.append(window)
+                self.processed_labels.append(stimulus)
+
     def __len__(self) -> int:
         """Возвращает количество примеров в датасете."""
-        return len(self.dataframe)
+        return len(self.processed_data)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Возвращает пример из датасета по индексу."""
-        row = self.dataframe.iloc[idx]
-        emg = row["emg"]
-        stimulus = row["stimulus"]
-        if isinstance(emg, list) and len(emg) == 1:
-            emg = emg[0]
-        data = emg[:500]
-        if len(data) < 500:
-            data = np.concatenate((data, np.zeros((500 - len(data), 10))), axis=0)
+        """Возвращает пример из датасета по индексу.
+
+        Args:
+            idx: Индекс примера
+
+        Returns:
+            Кортеж (данные, метка):
+            - данные: тензор формы [sliding_window_size, num_channels]
+            - метка: тензор с меткой класса
+        """
+        data = self.processed_data[idx]
+        stimulus = self.processed_labels[idx]
 
         # Аугментация данных (только для тренировочного сета)
         if self.is_train:
@@ -74,7 +122,8 @@ class Nina1Dataset(Dataset):
 
             # 3. Временной сдвиг (60% шанс)
             if np.random.random() < 0.6:
-                shift = np.random.randint(-25, 25)
+                # Уменьшенный диапазон сдвига для меньших окон
+                shift = np.random.randint(-5, 5)
                 data = np.roll(data, shift, axis=0)
                 if shift > 0:
                     data[:shift, :] = 0
@@ -87,11 +136,11 @@ class Nina1Dataset(Dataset):
                 channels = np.random.choice(data.shape[1], num_channels, replace=False)
                 data[:, channels] = 0
 
-            # 6. Случайное зеркальное отражение (20% шанс)
+            # 5. Случайное зеркальное отражение (20% шанс)
             if np.random.random() < 0.2:
                 data = data[::-1].copy()
 
-            # 7. Случайное изменение частоты дискретизации (50% шанс)
+            # 6. Случайное изменение частоты дискретизации (50% шанс)
             if np.random.random() < 0.5:
                 stretch_factor = np.random.uniform(0.9, 1.1)
                 new_length = int(data.shape[0] * stretch_factor)
@@ -101,12 +150,15 @@ class Nina1Dataset(Dataset):
                 for i in range(data.shape[1]):
                     new_data[:, i] = np.interp(x_new, x_old, data[:, i])
                 data = new_data
-                # Pad or truncate back to 500
-                if new_length > 500:
-                    data = data[:500, :]
-                elif new_length < 500:
+                # Приводим к размеру sliding_window_size
+                if new_length > self.sliding_window_size:
+                    data = data[: self.sliding_window_size, :]  # Обрезаем
+                elif new_length < self.sliding_window_size:
+                    # Дополняем нулями
                     data = np.pad(
-                        data, ((0, 500 - new_length), (0, 0)), mode="constant"
+                        data,
+                        ((0, self.sliding_window_size - new_length), (0, 0)),
+                        mode="constant",
                     )
 
             # Повторная нормализация после аугментации
@@ -119,11 +171,8 @@ class Nina1Dataset(Dataset):
                 np.std(data, axis=0, keepdims=True) + 1e-8
             )
 
-        # Изменение формы (25, 20, 10)
-        input_data = data.reshape((25, 20, 10))
-
         return (
-            torch.tensor(input_data, dtype=torch.float32),
+            torch.tensor(data, dtype=torch.float32),
             torch.tensor(stimulus, dtype=torch.long),
         )
 
@@ -137,6 +186,9 @@ class MyDataModule(pl.LightningDataModule):
         batch_size: int = 32,
         num_workers: int = 4,
         val_size: float = 0.2,
+        window_size: int = 500,  # Размер окна для сегментации
+        sliding_window_size: int = 25,  # Размер скользящего окна
+        step_size: int = 1,  # Шаг для скользящего окна
     ):
         """Инициализация модуля данных.
 
@@ -145,12 +197,20 @@ class MyDataModule(pl.LightningDataModule):
             batch_size: Размер батча
             num_workers: Число workers для DataLoader
             val_size: Доля валидационных данных от train
+            window_size: Размер окна для сегментации сигнала
+            sliding_window_size: Размер скользящего окна для LSTM
+            step_size: Шаг для скользящего окна
         """
         super().__init__()
         self.data_root = Path(data_root).resolve()
+        # Параметры для загрузки данных
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.val_size = val_size
+        # Параметры для гибкой настройки размеров окон
+        self.window_size = window_size
+        self.sliding_window_size = sliding_window_size
+        self.step_size = step_size
 
         # Пути к файлам
         self.train_pkl = self.data_root / "train_data" / "ninaprodb1train.pkl"
@@ -213,10 +273,29 @@ class MyDataModule(pl.LightningDataModule):
             unique_classes
         ), "Метки классов вне допустимого диапазона"
 
-        # Создание датасетов
-        self.train_ds = Nina1Dataset(train_data)
-        self.val_ds = Nina1Dataset(val_data)
-        self.test_ds = Nina1Dataset(test_df)
+        # Создание датасетов с новыми параметрами
+        # Для каждого набора данных используем свои параметры
+        self.train_ds = Nina1Dataset(
+            train_data,
+            window_size=self.window_size,
+            sliding_window_size=self.sliding_window_size,
+            step_size=self.step_size,
+            is_train=True,  # Включаем аугментацию для train
+        )
+        self.val_ds = Nina1Dataset(
+            val_data,
+            window_size=self.window_size,
+            sliding_window_size=self.sliding_window_size,
+            step_size=self.step_size,
+            is_train=False,  # Отключаем аугментацию для val
+        )
+        self.test_ds = Nina1Dataset(
+            test_df,
+            window_size=self.window_size,
+            sliding_window_size=self.sliding_window_size,
+            step_size=self.step_size,
+            is_train=False,  # Отключаем аугментацию для test
+        )
 
         print(f"Train samples: {len(self.train_ds)}")
         print(f"Val samples: {len(self.val_ds)}")
