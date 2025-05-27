@@ -179,3 +179,29 @@ pl_modules/outputs
 mlruns/
 checkpoints/
 data/
+
+# PyTorch
+*.pt
+*.pth
+*.ckpt
+
+# TensorBoard
+*.tfevents.*
+
+# Hydra
+outputs/
+multirun/
+
+# Logs
+logs/
+wandb/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
