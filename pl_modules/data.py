@@ -97,7 +97,7 @@ class Nina1Dataset(Dataset):
 
         Returns:
             Кортеж (данные, метка):
-            - данные: тензор формы [sliding_window_size, num_channels]
+            - данные: тензор формы [window_size, num_channels]
             - метка: тензор с меткой класса
         """
         data = self.processed_data[idx]
@@ -171,9 +171,16 @@ class Nina1Dataset(Dataset):
                 np.std(data, axis=0, keepdims=True) + 1e-8
             )
 
+        # Преобразуем в формат [window_size, num_channels]
+        data = np.pad(
+            data,
+            ((0, self.window_size - data.shape[0]), (0, 0)),
+            mode="constant",
+        )
+
         return (
-            torch.tensor(data, dtype=torch.float32),
-            torch.tensor(stimulus, dtype=torch.long),
+            torch.tensor(data, dtype=torch.float32),  # [window_size, num_channels]
+            torch.tensor(stimulus, dtype=torch.long),  # скаляр
         )
 
 

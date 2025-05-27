@@ -1,0 +1,6 @@
+learning_rate: 0.001
+weight_decay: 0.001
+hessian_freq: 10
+window_size: 200
+sliding_window_size: 50
+num_classes: 17

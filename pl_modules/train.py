@@ -1,19 +1,19 @@
 """Модуль для обучения модели классификации ЭМГ сигналов.
 
-Этот модуль содержит функции и классы для настройки и запуска
-процесса обучения нейронной сети. Включает в себя конфигурацию
-модели, логирование и сохранение результатов.
+Этот модуль содержит функции для настройки и запуска процесса обучения модели,
+включая загрузку конфигурации, подготовку данных и запуск обучения.
 """
 
+# Настройка логирования
+import logging
 from pathlib import Path
 
 import hydra
 import pytorch_lightning as pl
 import torch
-from core_arch import EMGHandNet
-from data import MyDataModule
-from model import EMGHandNet_classifier
 from omegaconf import DictConfig, OmegaConf
+from pl_modules.data import MyDataModule
+from pl_modules.model import EMGHandNet_classifier
 from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
@@ -22,10 +22,13 @@ from pytorch_lightning.callbacks import (
 from pytorch_lightning.loggers import TensorBoardLogger
 
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 torch.set_float32_matmul_precision("medium")
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
+@hydra.main(version_base=None, config_path="../conf", config_name="config")
 def train(config: DictConfig) -> None:
     """Запускает процесс обучения модели.
 
@@ -39,31 +42,29 @@ def train(config: DictConfig) -> None:
     # Инициализируем логгер
     logger = TensorBoardLogger(
         save_dir=str(log_dir),
-        name=config.model.name,
+        name="emg_classifier",
         version=None,
     )
 
     # Создаем модель
-    model = EMGHandNet(
-        num_classes=config.model.num_classes,
-        input_channels=config.model.input_channels,
-    )
     classifier = EMGHandNet_classifier(
-        model=model,
-        lr=config.training.lr,
-        config=config,
+        learning_rate=config.training.lr,
+        weight_decay=config.training.weight_decay,
+        window_size=config.data_loading.window_size,
+        sliding_window_size=config.data_loading.sliding_window_size,
+        num_classes=config.model.num_classes,
     )
 
     # Настраиваем колбэки
     callbacks = [
         EarlyStopping(
             monitor="val_loss",
-            patience=config.training.early_stopping_patience,
+            patience=10,  # Уменьшаем patience для более быстрой остановки
             mode="min",
         ),
         LearningRateMonitor(logging_interval="step"),
         ModelCheckpoint(
-            dirpath=log_dir / config.model.name,
+            dirpath=log_dir / "emg_classifier",
             filename="{epoch}-{val_loss:.2f}",
             monitor="val_loss",
             mode="min",
@@ -73,19 +74,22 @@ def train(config: DictConfig) -> None:
 
     # Создаем тренер
     trainer = pl.Trainer(
-        max_epochs=config.training.max_epochs,
-        accelerator=config.training.accelerator,
-        devices=config.training.devices,
+        max_epochs=config.training.num_epochs,
+        accelerator="auto",  # Автоматически выбираем доступное устройство
+        devices=1,  # Используем одно устройство
         logger=logger,
         callbacks=callbacks,
-        log_every_n_steps=config.training.log_every_n_steps,
+        log_every_n_steps=10,
     )
 
     # Инициализируем модуль данных
     data_module = MyDataModule(
-        data_root=config.data.data_dir,
+        data_root=config.data_loading.data_root,
         batch_size=config.training.batch_size,
         num_workers=config.training.num_workers,
+        window_size=config.data_loading.window_size,
+        sliding_window_size=config.data_loading.sliding_window_size,
+        step_size=config.data_loading.step_size,
     )
 
     # Запускаем обучение
@@ -97,7 +101,7 @@ def train(config: DictConfig) -> None:
     # Сохраняем конфигурацию
     OmegaConf.save(
         config=config,
-        f=log_dir / config.model.name / "config.yaml",
+        f=log_dir / "emg_classifier" / "config.yaml",
     )
 
 

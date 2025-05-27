@@ -5,7 +5,6 @@
 вычисления гессиана и настройки оптимизатора.
 """
 
-import logging
 from typing import Any, Dict, Tuple
 
 import pytorch_lightning as pl
@@ -14,35 +13,35 @@ import torch.nn.functional as F
 from pl_modules.core_arch import EMGHandNet
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torchmetrics import Accuracy
 
 
 class EMGHandNet_classifier(pl.LightningModule):
-    """Классификатор ЭМГ сигналов на основе PyTorch Lightning.
+    """Классификатор ЭМГ сигналов на основе PyTorch Lightning."""
 
-    Этот класс реализует полный цикл обучения модели, включая:
-    - Настройку архитектуры и параметров обучения
-    - Методы для тренировки и валидации
-    - Вычисление гессиана для анализа обучения
-    - Настройку оптимизатора и планировщика скорости обучения
-    - Работу с матрицей вероятностей для каждого окна
-    """
+    # Этот класс реализует полный цикл обучения модели, включая:
+    # - Настройку архитектуры и параметров обучения
+    # - Методы для тренировки и валидации
+    # - Вычисление гессиана для анализа обучения
+    # - Настройку оптимизатора и планировщика скорости обучения
+    # - Работу с матрицей вероятностей для каждого окна.
 
     def __init__(
         self,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-5,
-        hessian_freq: int = 10,
         window_size: int = 500,  # Размер входного окна
         sliding_window_size: int = 25,  # Размер скользящего окна
+        num_classes: int = 17,  # <-- добавляем
     ):
         """Инициализация модели.
 
         Args:
             learning_rate: Скорость обучения
             weight_decay: Коэффициент регуляризации
-            hessian_freq: Частота вычисления гессиана
             window_size: Размер входного окна (количество сэмплов)
             sliding_window_size: Размер скользящего окна для LSTM
+            num_classes: Количество классов
         """
         super().__init__()
         self.save_hyperparameters()
@@ -53,75 +52,28 @@ class EMGHandNet_classifier(pl.LightningModule):
         )
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
-        self.hessian_freq = hessian_freq
+        self.num_classes = num_classes
 
         # Метрики для отслеживания точности
-        self.train_acc = pl.metrics.Accuracy()  # Общая точность
-        self.val_acc = pl.metrics.Accuracy()  # Точность на валидации
-        self.test_acc = pl.metrics.Accuracy()  # Точность на тесте
-
-        # Для гессиана
-        self.hessian_condition_number = None
-        self.hessian_trace = None
+        self.train_acc = Accuracy(task="multiclass", num_classes=num_classes)
+        self.val_acc = Accuracy(task="multiclass", num_classes=num_classes)
+        self.test_acc = Accuracy(task="multiclass", num_classes=num_classes)
 
         # История матриц вероятностей для анализа
-        # Каждый элемент - матрица размером [sliding_window_size, num_classes]
+        # Каждый элемент - матрица размером [window_steps, num_classes]
         self.probability_matrix_history = []
 
-    def compute_hessian(self, loss: torch.Tensor) -> Tuple[float, float]:
-        """Вычисляет гессиан функции потерь.
-
-        Args:
-            loss: Значение функции потерь
-
-        Returns:
-            Кортеж (число обусловленности, след) гессиана
-        """
-        try:
-            # Градиент
-            grad = torch.autograd.grad(loss, self.parameters(), create_graph=True)
-            grad = torch.cat([g.flatten() for g in grad])
-
-            # Гессиан
-            hessian_matrix = torch.zeros((len(grad), len(grad)), device=self.device)
-            for i in range(len(grad)):
-                hessian_matrix[i] = torch.autograd.grad(
-                    grad[i], self.parameters(), create_graph=False, retain_graph=True
-                )
-                hessian_matrix[i] = torch.cat([h.flatten() for h in hessian_matrix[i]])
-
-            # Собственные значения
-            eigenvalues = torch.linalg.eigvals(hessian_matrix).real
-            condition_number = torch.max(torch.abs(eigenvalues)) / (
-                torch.min(torch.abs(eigenvalues)) + 1e-8
-            )
-            trace = torch.trace(hessian_matrix)
-
-            return condition_number.item(), trace.item()
-
-        except (RuntimeError, ValueError) as e:
-            logging.error(f"Ошибка при вычислении гессиана: {e}")
-            return 0.0, 0.0
-
-    def compute_window_accuracy(
-        self, probs: torch.Tensor, targets: torch.Tensor
-    ) -> float:
-        """Вычисляет точность классификации для каждого окна.
-
-        Args:
-            probs: Матрица вероятностей [sliding_window_size, num_classes]
-                  Каждая строка - вероятности классов для одного окна
-            targets: Целевые метки [batch_size]
-                    Одна метка для всего батча
-
-        Returns:
-            Средняя точность по всем окнам (от 0 до 1)
-        """
-        # Получаем предсказания для каждого окна
-        predictions = probs.argmax(dim=1)  # [sliding_window_size]
-        # Сравниваем с целевой меткой и усредняем
-        correct = (predictions == targets).float().mean()
-        return correct.item()
+    def compute_window_accuracy(self, prob_matrix, targets):
+        """Вычисляет точность по каждому окну (временной шаг)"""
+        # prob_matrix: [window_steps, num_classes]
+        # targets: [batch_size]
+        # Для каждого окна берём argmax по классам
+        predictions = prob_matrix.argmax(dim=1)  # [window_steps]
+        # targets нужно привести к [window_steps] или [batch_size], если нужно сравнивать
+        # Но правильнее — усреднять по batch, а не по окнам
+        # Поэтому возвращаем среднюю точность по окнам
+        correct = (predictions.unsqueeze(1) == targets.unsqueeze(0)).float().mean()
+        return correct
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Прямой проход модели.
@@ -167,12 +119,6 @@ class EMGHandNet_classifier(pl.LightningModule):
         self.log("train_acc", self.train_acc, prog_bar=True)
         self.log("train_window_acc", window_acc, prog_bar=True)
 
-        # Гессиан (редко)
-        if batch_idx % self.hessian_freq == 0:
-            condition_number, trace = self.compute_hessian(loss)
-            self.log("hessian_condition", condition_number)
-            self.log("hessian_trace", trace)
-
         return {"loss": loss}
 
     def validation_step(
@@ -198,12 +144,6 @@ class EMGHandNet_classifier(pl.LightningModule):
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", self.val_acc, prog_bar=True)
         self.log("val_window_acc", window_acc, prog_bar=True)
-
-        # Гессиан (редко)
-        if batch_idx % self.hessian_freq == 0:
-            condition_number, trace = self.compute_hessian(loss)
-            self.log("val_hessian_condition", condition_number)
-            self.log("val_hessian_trace", trace)
 
         return {"val_loss": loss}
 
@@ -264,7 +204,6 @@ class EMGHandNet_classifier(pl.LightningModule):
             mode="min",
             factor=0.1,
             patience=5,
-            verbose=True,
         )
 
         return {
