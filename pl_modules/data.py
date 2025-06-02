@@ -211,13 +211,15 @@ class MyDataModule(pl.LightningDataModule):
         print("Train data shape:", train_data["emg"].shape)
         print("Train stimulus shape:", train_data["stimulus"].shape)
 
-        # Преобразуем данные в список словарей
-        train_records = []
-        for i in range(len(train_data["stimulus"])):
-            train_records.append(
-                {"emg": train_data["emg"][i], "stimulus": train_data["stimulus"][i]}
-            )
-        train_df = pd.DataFrame(train_records)
+        # Создаем DataFrame напрямую из numpy массивов
+        train_df = pd.DataFrame(
+            {
+                "emg": list(
+                    train_data["emg"]
+                ),  # Преобразуем в список для сохранения размерности
+                "stimulus": train_data["stimulus"],
+            }
+        )
 
         # Анализ уникальных меток
         unique_classes = sorted(np.unique(train_df["stimulus"]))
@@ -254,12 +256,14 @@ class MyDataModule(pl.LightningDataModule):
 
         # Загрузка test и применение того же маппинга
         test_data = np.load(self.test_pkl, allow_pickle=True)
-        test_records = []
-        for i in range(len(test_data["stimulus"])):
-            test_records.append(
-                {"emg": test_data["emg"][i], "stimulus": test_data["stimulus"][i]}
-            )
-        test_df = pd.DataFrame(test_records)
+        test_df = pd.DataFrame(
+            {
+                "emg": list(
+                    test_data["emg"]
+                ),  # Преобразуем в список для сохранения размерности
+                "stimulus": test_data["stimulus"],
+            }
+        )
         test_df["stimulus"] = test_df["stimulus"].map(class_mapping)
 
         # Удаляем строки с NaN значениями

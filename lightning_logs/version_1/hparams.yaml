@@ -1,5 +1,0 @@
-learning_rate: 0.001
-weight_decay: 0.001
-window_size: 200
-sliding_window_size: 25
-num_classes: 17

@@ -205,3 +205,10 @@ wandb/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project specific
+*.pkl
+*.h5
+*.npy
+*.npz
+lightning_logs/

@@ -1,0 +1,14 @@
+{
+  "overrides": [
+    {
+      "files": "*.yaml",
+      "options": {
+        "parser": "yaml"
+      }
+    }
+  ],
+  "yaml": {
+    "singleQuote": false,
+    "trailingComma": "none"
+  }
+}
