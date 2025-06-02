@@ -82,8 +82,16 @@ class Nina1Dataset(Dataset):
             # Для каждого окна создаем отдельный пример
             for i in range(0, window_size - sliding_window_size + 1, step_size):
                 window = emg[i : i + sliding_window_size]  # Вырезаем окно
+                # Нормализуем данные сразу
+                window = (window - np.mean(window, axis=0, keepdims=True)) / (
+                    np.std(window, axis=0, keepdims=True) + 1e-8
+                )
                 self.processed_data.append(window)
                 self.processed_labels.append(stimulus)
+
+        # Преобразуем списки в numpy массивы для ускорения
+        self.processed_data = np.array(self.processed_data)
+        self.processed_labels = np.array(self.processed_labels)
 
     def __len__(self) -> int:
         """Возвращает количество примеров в датасете."""
@@ -100,16 +108,11 @@ class Nina1Dataset(Dataset):
             - данные: тензор формы [window_size, num_channels]
             - метка: тензор с меткой класса
         """
-        data = self.processed_data[idx]
+        data = self.processed_data[idx].copy()
         stimulus = self.processed_labels[idx]
 
         # Аугментация данных (только для тренировочного сета)
         if self.is_train:
-            # Базовая нормализация перед аугментацией
-            data = (data - np.mean(data, axis=0, keepdims=True)) / (
-                np.std(data, axis=0, keepdims=True) + 1e-8
-            )
-
             # 1. Масштабирование амплитуды (80% шанс)
             if np.random.random() < 0.8:
                 scale_factor = np.random.uniform(0.7, 1.3, size=data.shape[1])
@@ -122,7 +125,6 @@ class Nina1Dataset(Dataset):
 
             # 3. Временной сдвиг (60% шанс)
             if np.random.random() < 0.6:
-                # Уменьшенный диапазон сдвига для меньших окон
                 shift = np.random.randint(-5, 5)
                 data = np.roll(data, shift, axis=0)
                 if shift > 0:
@@ -139,37 +141,6 @@ class Nina1Dataset(Dataset):
             # 5. Случайное зеркальное отражение (20% шанс)
             if np.random.random() < 0.2:
                 data = data[::-1].copy()
-
-            # 6. Случайное изменение частоты дискретизации (50% шанс)
-            if np.random.random() < 0.5:
-                stretch_factor = np.random.uniform(0.9, 1.1)
-                new_length = int(data.shape[0] * stretch_factor)
-                x_old = np.linspace(0, 1, data.shape[0])
-                x_new = np.linspace(0, 1, new_length)
-                new_data = np.zeros((new_length, data.shape[1]))
-                for i in range(data.shape[1]):
-                    new_data[:, i] = np.interp(x_new, x_old, data[:, i])
-                data = new_data
-                # Приводим к размеру sliding_window_size
-                if new_length > self.sliding_window_size:
-                    data = data[: self.sliding_window_size, :]  # Обрезаем
-                elif new_length < self.sliding_window_size:
-                    # Дополняем нулями
-                    data = np.pad(
-                        data,
-                        ((0, self.sliding_window_size - new_length), (0, 0)),
-                        mode="constant",
-                    )
-
-            # Повторная нормализация после аугментации
-            data = (data - np.mean(data, axis=0, keepdims=True)) / (
-                np.std(data, axis=0, keepdims=True) + 1e-8
-            )
-        else:
-            # Для валидации и теста только нормализация
-            data = (data - np.mean(data, axis=0, keepdims=True)) / (
-                np.std(data, axis=0, keepdims=True) + 1e-8
-            )
 
         # Преобразуем в формат [window_size, num_channels]
         data = np.pad(
@@ -193,7 +164,7 @@ class MyDataModule(pl.LightningDataModule):
         batch_size: int = 32,
         num_workers: int = 4,
         val_size: float = 0.2,
-        window_size: int = 500,  # Размер окна для сегментации
+        window_size: int = 500,  # Размер окна для сегментации сигнала
         sliding_window_size: int = 25,  # Размер скользящего окна
         step_size: int = 1,  # Шаг для скользящего окна
     ):
@@ -235,10 +206,21 @@ class MyDataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None):
         """Загрузка данных и разделение на train/val/test."""
         # Загрузка train и разделение на train/val
-        train_df = pd.read_pickle(self.train_pkl)
+        train_data = np.load(self.train_pkl, allow_pickle=True)
+        print("Train data keys:", train_data.keys())
+        print("Train data shape:", train_data["emg"].shape)
+        print("Train stimulus shape:", train_data["stimulus"].shape)
+
+        # Преобразуем данные в список словарей
+        train_records = []
+        for i in range(len(train_data["stimulus"])):
+            train_records.append(
+                {"emg": train_data["emg"][i], "stimulus": train_data["stimulus"][i]}
+            )
+        train_df = pd.DataFrame(train_records)
 
         # Анализ уникальных меток
-        unique_classes = sorted(train_df["stimulus"].unique())
+        unique_classes = sorted(np.unique(train_df["stimulus"]))
         print(f"Уникальные классы в данных: {unique_classes}")
         print(f"Количество уникальных классов: {len(unique_classes)}")
 
@@ -253,12 +235,15 @@ class MyDataModule(pl.LightningDataModule):
         # Создаем маппинг для преобразования меток
         class_mapping = {
             old_label: idx
-            for idx, old_label in enumerate(sorted(set(train_df["stimulus"].unique())))
+            for idx, old_label in enumerate(sorted(np.unique(train_df["stimulus"])))
         }
         print(f"Маппинг классов: {class_mapping}")
 
         # Применяем маппинг к меткам
         train_df["stimulus"] = train_df["stimulus"].map(class_mapping)
+
+        # Удаляем строки с NaN значениями
+        train_df = train_df.dropna(subset=["stimulus"])
 
         train_data, val_data = train_test_split(
             train_df,
@@ -268,17 +253,29 @@ class MyDataModule(pl.LightningDataModule):
         )
 
         # Загрузка test и применение того же маппинга
-        test_df = pd.read_pickle(self.test_pkl)
+        test_data = np.load(self.test_pkl, allow_pickle=True)
+        test_records = []
+        for i in range(len(test_data["stimulus"])):
+            test_records.append(
+                {"emg": test_data["emg"][i], "stimulus": test_data["stimulus"][i]}
+            )
+        test_df = pd.DataFrame(test_records)
         test_df["stimulus"] = test_df["stimulus"].map(class_mapping)
 
+        # Удаляем строки с NaN значениями
+        test_df = test_df.dropna(subset=["stimulus"])
+
         # Проверяем, что все метки в правильном диапазоне
-        all_labels = set(train_df["stimulus"].unique()) | set(
-            test_df["stimulus"].unique()
+        all_labels = set(np.unique(train_df["stimulus"])) | set(
+            np.unique(test_df["stimulus"])
         )
         print(f"Все метки после маппинга: {sorted(all_labels)}")
         assert max(all_labels) < len(
             unique_classes
         ), "Метки классов вне допустимого диапазона"
+
+        # Предварительная обработка данных
+        print("Предварительная обработка данных...")
 
         # Создание датасетов с новыми параметрами
         # Для каждого набора данных используем свои параметры

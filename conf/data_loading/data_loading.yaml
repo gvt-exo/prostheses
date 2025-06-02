@@ -4,4 +4,4 @@ test_data_path: ${data_loading.data_root}/test_data/ninaprodb1test.pkl
 val_size: 0.2
 window_size: 200
 sliding_window_size: 50
-step_size: 10
+step_size: 25

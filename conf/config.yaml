@@ -9,3 +9,15 @@ hydra:
   sweep:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
+
+data:
+  data_dir: "data" # путь к директории с данными
+  batch_size: 32
+
+model:
+  learning_rate: 0.001
+  weight_decay: 0.001
+  window_size: 200
+  sliding_window_size: 25
+  num_classes: 17
+  checkpoint_path: "logs/emg_classifier/epoch=2-val_loss=2.79.ckpt" # путь к файлу с весами модели

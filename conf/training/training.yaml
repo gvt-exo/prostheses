@@ -1,5 +1,5 @@
-batch_size: 128
+batch_size: 256
 lr: 0.001
-num_workers: 8
-num_epochs: 100
+num_workers: 4
+num_epochs: 20
 weight_decay: 0.001
